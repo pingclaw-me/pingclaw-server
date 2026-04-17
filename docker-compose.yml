@@ -1,0 +1,82 @@
+# Local development stack mirroring the Digital Ocean target:
+#   - pingclaw-server (Go binary)
+#   - postgres        (users, tokens, webhooks)
+#   - redis           (location cache, 24h TTL)
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up --build
+#
+# Visit http://localhost:8090.
+#
+# WARNING: the credentials below (pingclaw/pingclaw) are dev-only.
+# Override with environment variables for any non-local deployment.
+
+services:
+  server:
+    build: .
+    image: pingclaw-server:latest
+    container_name: pingclaw-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://pingclaw:pingclaw@postgres:5432/pingclaw?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      LOG_FILE: logs/server.log
+    ports:
+      # Bumped off the default 8080 to avoid colliding with a natively-run
+      # server. Browse to http://localhost:8090.
+      - "8090:8080"
+    volumes:
+      - server_logs:/app/logs
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: pingclaw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pingclaw
+      POSTGRES_PASSWORD: pingclaw
+      POSTGRES_DB: pingclaw
+    ports:
+      # Exposed on a non-default host port so it doesn't collide with a
+      # local Postgres install. Inside the docker network, other services
+      # still talk to "postgres:5432". Connect from your host with:
+      #   psql -h localhost -p 5433 -U pingclaw pingclaw
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pingclaw -d pingclaw"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pingclaw-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # Bumped off the default 6379 to avoid colliding with a local Redis
+      # install. Inside the docker network, other services still talk to
+      # "redis:6379". Connect from your host with:
+      #   redis-cli -p 6380
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  server_logs:

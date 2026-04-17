@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms of Service — PingClaw</title>
+    <link rel="icon" type="image/png" sizes="any" href="/icon.png?v=6">
+    <link rel="shortcut icon" href="/favicon.ico?v=6">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=6">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Sans:ital,wght@0,300;0,400;0,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css?v=32">
+</head>
+<body>
+    <main>
+        <nav class="pc-nav pc-nav-static">
+            <div class="pc-nav-inner">
+                <a class="pc-wordmark pc-wordmark-stacked" href="/">
+                    <span class="pc-wordmark-ping">Ping</span><span class="pc-wordmark-claw">Claw</span>
+                </a>
+                <div class="pc-nav-spacer"></div>
+                <a class="pc-nav-link" href="/">Back</a>
+            </div>
+        </nav>
+
+        <div class="pc-container-narrow" style="padding-top: 64px; padding-bottom: 64px;">
+            <div class="pc-eyebrow">Terms</div>
+            <h1 class="pc-h1" style="margin-bottom: 8px;">Terms of service</h1>
+            <p class="pc-help" style="margin-bottom: 32px;">Last updated: {{.LastUpdated}}</p>
+
+            <div class="pc-prose">
+                {{.Content}}
+            </div>
+        </div>
+    </main>
+
+    <footer class="pc-footer">
+        <p>Location context for AI</p>
+        <p style="margin-top: 8px;">© 2026 Christian Reimer</p>
+    </footer>
+</body>
+</html>

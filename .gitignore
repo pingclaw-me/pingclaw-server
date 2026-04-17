@@ -1,0 +1,15 @@
+# Local environment — contains real API keys, bearer tokens, and DB path.
+.env
+.env.local
+
+# Runtime logs. Contain phone numbers, verification codes, token prefixes.
+logs/
+
+# Stale local SQLite files from before the Postgres migration.
+data/
+
+# Build / editor / OS junk.
+*.bak
+*.tmp
+*~
+.DS_Store
