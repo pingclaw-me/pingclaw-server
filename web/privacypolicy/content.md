@@ -4,13 +4,13 @@ PingClaw sends your phone's GPS location to a server so your AI assistant can an
 
 ## Phone number
 
-Your phone number is used only to verify your identity at sign-up. It is immediately converted into a form that cannot be reversed. PingClaw does not store, recover, view, or share your actual phone number.
+Your phone number is used only to verify your identity at sign-up and at each subsequent sign-in. It is immediately converted into a form that cannot be reversed. PingClaw does not store, recover, view, or share your actual phone number.
 
 ## Location data
 
 - Only your most recent location is stored — there is no location history.
-- Location data expires automatically after 24 hours. If your phone stops sending updates, your location is deleted.
-- Location data is held in temporary memory only — never written to permanent storage.
+- Location data is held only in our Redis cache and expires automatically after 24 hours. It is never written to a permanent database.
+- Your most recent location is replaced every time your phone sends an update.
 - Your location is accessible only through your own account.
 
 ## What PingClaw does not do
@@ -26,12 +26,14 @@ Your account has a pairing token used by the app and an API key used by your AI 
 
 ## Account deletion
 
-You can delete your account at any time from within the app or web dashboard. This permanently removes your account and your cached location from the server. Deletion is immediate and irreversible.
+You can delete your account at any time from within the app or web dashboard. This permanently removes your account, your authentication tokens, your webhook configuration, and your cached location from the server. Deletion is immediate and irreversible.
 
 ## What is stored on the server
 
-- Account data: a unique ID, your authentication tokens, and the date your account was created. No phone number. No location history.
-- Current location: your most recent location, automatically deleted after one day.
+- **Account data**: a unique ID, a SHA-256 hash of your phone number, your authentication tokens (stored as hashes), and — if you've configured one — your webhook URL and the secret you supplied. Plus the dates the account was created and last updated.
+- **Current location**: your most recent location only, automatically deleted after 24 hours.
+
+Standard web request metadata (IP address, User-Agent) may be observed by our hosting infrastructure; PingClaw does not durably store it in the application database.
 
 ## Contact
 

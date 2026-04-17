@@ -4,7 +4,7 @@ By signing up for, downloading, or using PingClaw, you agree to these terms. If 
 
 ## What PingClaw is
 
-PingClaw is a personal location utility. The iOS app sends your phone's location to a server you operate (or that operates on your behalf), so your AI assistant can answer location-aware questions. PingClaw is not a navigation, social, or sharing service.
+PingClaw is a personal location utility. The iOS app sends your phone's location to a PingClaw server (the hosted instance at pingclaw.me by default; users can self-host) so your AI assistant can answer location-aware questions. PingClaw is not a navigation, social, or sharing service.
 
 ## Your account
 

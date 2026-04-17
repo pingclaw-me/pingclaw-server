@@ -194,7 +194,15 @@ func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
 	h.codes.put(phone, code)
 
 	// Code delivery: log to server log only (no SMS provider configured).
-	slog.Info("[PINGCLAW SMS]", "phone", phone, "code", code)
+	// Log a redacted suffix only — the full phone number is sensitive PII.
+	// In a real deployment with an SMS provider, the code wouldn't appear
+	// here at all; this log line exists only so the dev operator running
+	// without SMS can deliver the code out-of-band.
+	suffix := "****"
+	if len(phone) >= 4 {
+		suffix = "..." + phone[len(phone)-4:]
+	}
+	slog.Info("[PINGCLAW SMS]", "phone_suffix", suffix, "code", code)
 
 	writeJSON(w, 200, map[string]string{
 		"status":  "sent",
@@ -786,6 +794,15 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
+
+	// Drop the Redis location cache first. Postgres delete cascades take
+	// care of user_tokens + user_webhooks, but the cached location is in
+	// a separate store and would otherwise linger until its 24h TTL.
+	// Best-effort: log but don't fail the delete if Redis is unavailable.
+	if err := h.rdb.Del(r.Context(), locationKey(userID)).Err(); err != nil {
+		slog.Warn("delete: redis cache delete failed", "user_id", userID, "error", err)
+	}
+
 	if _, err := h.db.ExecContext(r.Context(),
 		`DELETE FROM users WHERE user_id = $1`, userID); err != nil {
 		writeError(w, 500, "delete failed")
