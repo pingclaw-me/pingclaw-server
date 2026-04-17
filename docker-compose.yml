@@ -28,6 +28,12 @@ services:
       DATABASE_URL: postgres://pingclaw:pingclaw@postgres:5432/pingclaw?sslmode=disable
       REDIS_URL: redis://redis:6379
       LOG_FILE: logs/server.log
+      # Twilio (optional in dev — if unset, codes are logged).
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      RATE_LIMIT_PHONE_PER_HOUR: ${RATE_LIMIT_PHONE_PER_HOUR:-3}
+      RATE_LIMIT_IP_PER_HOUR: ${RATE_LIMIT_IP_PER_HOUR:-10}
     ports:
       # Bumped off the default 8080 to avoid colliding with a natively-run
       # server. Browse to http://localhost:8090.

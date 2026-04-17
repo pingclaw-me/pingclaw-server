@@ -84,6 +84,11 @@ Everything runs from environment variables (see `.env.example`):
 - `DATABASE_URL` — PostgreSQL DSN (required, no default)
 - `REDIS_URL` — Redis DSN (required; stores location data with a 24-hour TTL)
 - `LOG_FILE` — server log (default `logs/server.log`)
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` — SMS delivery via Twilio. When unset, verification codes are written to the server log instead of being SMS'd — convenient for development. On trial Twilio accounts, only manually verified phone numbers can receive messages.
+- `RATE_LIMIT_PHONE_PER_HOUR` — max code sends per phone per hour (default `3`)
+- `RATE_LIMIT_IP_PER_HOUR` — max code sends per IP per hour (default `10`)
+
+Sign-in is currently restricted to US and Canada (+1) phone numbers.
 
 Run with `--debug` to bump log level to debug.
 

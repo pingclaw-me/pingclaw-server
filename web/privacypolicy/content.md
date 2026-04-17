@@ -6,6 +6,8 @@ PingClaw sends your phone's GPS location to a server so your AI assistant can an
 
 Your phone number is used only to verify your identity at sign-up and at each subsequent sign-in. It is immediately converted into a form that cannot be reversed. PingClaw does not store, recover, view, or share your actual phone number.
 
+When you sign in, your phone number is sent to Twilio (our SMS delivery provider) so it can deliver the verification code. Twilio retains the number per their own privacy policy. PingClaw still does not store your plaintext phone number — only its hash.
+
 ## Location data
 
 - Only your most recent location is stored — there is no location history.

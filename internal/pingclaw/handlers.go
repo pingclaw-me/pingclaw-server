@@ -14,27 +14,53 @@ import (
 	"errors"
 	"fmt"
 	mathrand "math/rand"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
+	"github.com/pingclaw-me/pingclaw-server/internal/sms"
 )
 
 type Handler struct {
-	db    *sql.DB
-	rdb   *redis.Client
-	codes *codeStore
+	db      *sql.DB
+	rdb     *redis.Client
+	sms     *sms.Client       // nil in dev → log code instead of sending SMS
+	limiter *ratelimit.Limiter
+	cfg     RateLimitConfig
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client) *Handler {
-	return &Handler{db: db, rdb: rdb, codes: newCodeStore()}
+// RateLimitConfig sets the per-window event caps for sign-in.
+type RateLimitConfig struct {
+	PerPhonePerHour int
+	PerIPPerHour    int
 }
+
+func NewHandler(db *sql.DB, rdb *redis.Client, smsClient *sms.Client, limiter *ratelimit.Limiter, cfg RateLimitConfig) *Handler {
+	if cfg.PerPhonePerHour <= 0 {
+		cfg.PerPhonePerHour = 3
+	}
+	if cfg.PerIPPerHour <= 0 {
+		cfg.PerIPPerHour = 10
+	}
+	return &Handler{db: db, rdb: rdb, sms: smsClient, limiter: limiter, cfg: cfg}
+}
+
+// --- Verification code store (Redis, 10-minute TTL) ---
+
+const codeTTL = 10 * time.Minute
+
+// codeKey is the Redis key for a pending verification code, keyed by
+// the SHA-256 hash of the phone number (no plaintext phone in Redis).
+func codeKey(phoneHash string) string { return "code:" + phoneHash }
 
 // locationTTL is how long a location data point survives in Redis after
 // it's written. Per the privacy policy, locations expire automatically
@@ -81,57 +107,6 @@ func (h *Handler) writeLocation(ctx context.Context, userID string, loc cachedLo
 		return err
 	}
 	return h.rdb.Set(ctx, locationKey(userID), body, locationTTL).Err()
-}
-
-// --- Code store (in-memory, 10-minute TTL) ---
-
-type codeStore struct {
-	mu    sync.Mutex
-	codes map[string]codeEntry
-}
-
-type codeEntry struct {
-	code      string
-	expiresAt time.Time
-}
-
-func newCodeStore() *codeStore {
-	cs := &codeStore{codes: map[string]codeEntry{}}
-	// Periodic cleanup
-	go func() {
-		t := time.NewTicker(5 * time.Minute)
-		for range t.C {
-			cs.mu.Lock()
-			now := time.Now()
-			for k, v := range cs.codes {
-				if now.After(v.expiresAt) {
-					delete(cs.codes, k)
-				}
-			}
-			cs.mu.Unlock()
-		}
-	}()
-	return cs
-}
-
-func (cs *codeStore) put(phone, code string) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	cs.codes[phone] = codeEntry{code: code, expiresAt: time.Now().Add(10 * time.Minute)}
-}
-
-func (cs *codeStore) verify(phone, code string) bool {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	entry, ok := cs.codes[phone]
-	if !ok || time.Now().After(entry.expiresAt) {
-		return false
-	}
-	if entry.code != code {
-		return false
-	}
-	delete(cs.codes, phone)
-	return true
 }
 
 // --- Helpers ---
@@ -189,21 +164,63 @@ func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "valid phone number required")
 		return
 	}
+	// US/CA only at launch — both share the +1 country code (NANP).
+	// We're not unpacking the area code beyond that; the wider NANP
+	// (Caribbean) is out of scope but acceptable to allow at this stage.
+	if !strings.HasPrefix(phone, "+1") {
+		writeError(w, 400, "only US and Canada phone numbers are supported")
+		return
+	}
+
+	phoneHash := hashToken(phone)
+
+	// Per-phone rate limit. We rate-limit on the hash so the limiter
+	// keys are themselves anonymous.
+	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:phone:"+phoneHash, h.cfg.PerPhonePerHour); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, 429, "too many code requests for this phone number — try again later")
+		return
+	}
+	// Per-IP rate limit. Catches an attacker spraying many phone numbers
+	// from one source.
+	ip := clientIP(r)
+	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:ip:"+ip, h.cfg.PerIPPerHour); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, 429, "too many code requests from this network — try again later")
+		return
+	}
 
 	code := generateCode()
-	h.codes.put(phone, code)
-
-	// Code delivery: log to server log only (no SMS provider configured).
-	// Log a redacted suffix only — the full phone number is sensitive PII.
-	// In a real deployment with an SMS provider, the code wouldn't appear
-	// here at all; this log line exists only so the dev operator running
-	// without SMS can deliver the code out-of-band.
-	suffix := "****"
-	if len(phone) >= 4 {
-		suffix = "..." + phone[len(phone)-4:]
+	if err := h.rdb.Set(r.Context(), codeKey(phoneHash), code, codeTTL).Err(); err != nil {
+		slog.Error("code store failed", "error", err)
+		writeError(w, 500, "internal error")
+		return
 	}
-	slog.Info("[PINGCLAW SMS]", "phone_suffix", suffix, "code", code)
 
+	body := fmt.Sprintf("Your PingClaw verification code is %s. It expires in 10 minutes.", code)
+
+	if h.sms != nil {
+		if err := h.sms.Send(r.Context(), phone, body); err != nil {
+			slog.Error("[PINGCLAW SMS] delivery failed", "error", err)
+			writeError(w, 502, "could not send verification code")
+			return
+		}
+		// Log the suffix so the operator can correlate without seeing
+		// the full number. The code is NOT logged when SMS is on.
+		suffix := "..." + phone[len(phone)-4:]
+		slog.Info("[PINGCLAW SMS] delivered", "phone_suffix", suffix)
+		writeJSON(w, 200, map[string]string{
+			"status":  "sent",
+			"message": "Verification code sent.",
+		})
+		return
+	}
+
+	// Dev fallback — no SMS provider configured. Log the code so the
+	// operator can hand it to the user out-of-band. Phone is redacted.
+	suffix := "..." + phone[len(phone)-4:]
+	slog.Info("[PINGCLAW SMS] dev-mode (no provider) — code in log",
+		"phone_suffix", suffix, "code", code)
 	writeJSON(w, 200, map[string]string{
 		"status":  "sent",
 		"message": "Verification code sent — check the server log (no SMS provider configured).",
@@ -221,7 +238,17 @@ func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	phone := normalizePhone(req.PhoneNumber)
 	code := strings.TrimSpace(req.Code)
-	if !h.codes.verify(phone, code) {
+	if phone == "" || code == "" {
+		writeError(w, 401, "invalid or expired code")
+		return
+	}
+	phoneHash := hashToken(phone)
+
+	// GETDEL is atomic single-use: a successful verify burns the code so
+	// it can't be replayed. If the key is missing (expired or already
+	// used) we treat it identically to a wrong code.
+	stored, err := h.rdb.GetDel(r.Context(), codeKey(phoneHash)).Result()
+	if errors.Is(err, redis.Nil) || err != nil || stored != code {
 		writeError(w, 401, "invalid or expired code")
 		return
 	}
@@ -229,10 +256,8 @@ func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	// The phone number is hashed before storage. We never persist the
 	// plaintext number — only the SHA-256 hash, used as a stable lookup
 	// key. This matches the privacy policy.
-	phoneHash := hashToken(phone)
-
 	var userID string
-	err := h.db.QueryRowContext(r.Context(),
+	err = h.db.QueryRowContext(r.Context(),
 		`SELECT user_id FROM users WHERE phone_number_hash = $1`, phoneHash).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		userID = "usr_" + uuid.New().String()[:12]
@@ -832,5 +857,24 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuth(h.PutWebhook))
 	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuth(h.DeleteWebhook))
 	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuth(h.TestWebhook))
+}
+
+// clientIP returns the best-guess client IP. Trusts X-Forwarded-For
+// when present (Digital Ocean's load balancer is on our request path
+// and sets it). Strips port from r.RemoteAddr otherwise.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// XFF can be a comma-separated chain; the first entry is the
+		// original client.
+		if i := strings.Index(xff, ","); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 

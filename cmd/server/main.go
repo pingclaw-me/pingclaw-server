@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver
@@ -25,6 +26,8 @@ import (
 
 	"github.com/pingclaw-me/pingclaw-server/internal/mdpage"
 	"github.com/pingclaw-me/pingclaw-server/internal/pingclaw"
+	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
+	"github.com/pingclaw-me/pingclaw-server/internal/sms"
 	"github.com/joho/godotenv"
 )
 
@@ -65,10 +68,31 @@ func main() {
 	defer rdb.Close()
 	slog.Info("redis initialised")
 
+	// SMS provider (Twilio). Optional — when unset, SendCode falls back
+	// to logging the verification code so dev installs work without a
+	// Twilio account.
+	var smsClient *sms.Client
+	if sid := os.Getenv("TWILIO_ACCOUNT_SID"); sid != "" {
+		smsClient = sms.New(
+			sid,
+			os.Getenv("TWILIO_AUTH_TOKEN"),
+			os.Getenv("TWILIO_FROM_NUMBER"),
+		)
+		slog.Info("twilio sms enabled")
+	} else {
+		slog.Warn("TWILIO_ACCOUNT_SID not set — verification codes will be logged, not SMS'd")
+	}
+
+	limiter := ratelimit.New(rdb, time.Hour)
+	rlConfig := pingclaw.RateLimitConfig{
+		PerPhonePerHour: envInt("RATE_LIMIT_PHONE_PER_HOUR", 3),
+		PerIPPerHour:    envInt("RATE_LIMIT_IP_PER_HOUR", 10),
+	}
+
 	mux := http.NewServeMux()
 
 	// PingClaw web dashboard + iOS app endpoints (under /pingclaw/)
-	pc := pingclaw.NewHandler(db, rdb)
+	pc := pingclaw.NewHandler(db, rdb, smsClient, limiter, rlConfig)
 	pc.RegisterRoutes(mux)
 
 	// PingClaw MCP server — per-user, authenticated by the user's API key
@@ -278,6 +302,15 @@ func initRedis(redisURL string) (*redis.Client, error) {
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return fallback
 }
