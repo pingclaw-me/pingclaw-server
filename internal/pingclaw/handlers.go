@@ -199,7 +199,7 @@ func (h *Handler) SocialAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Issue the right token kind based on the calling client.
-	if req.Client == "ios" {
+	if req.Client == "ios" || req.Client == "android" {
 		pt, err := h.rotateToken(r.Context(), userID, "pairing_token", "pt_")
 		if err != nil {
 			slog.Error("issue pairing_token failed", "user_id", userID, "error", err)

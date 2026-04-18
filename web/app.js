@@ -165,9 +165,8 @@ function updateHeaderBtn() {
 // --- Social auth ---
 
 // Called once when the auth section becomes visible. Initialises the
-// Google SDK (but doesn't render their button — we use our own styled
-// one). Apple uses a plain HTML button + AppleID.auth.signIn().
-// Idempotent — safe to call on every show.
+// Google SDK for the callback. The visible button is our own styled
+// one; clicking it triggers the SDK's rendered button hidden off-screen.
 let googleInitialised = false;
 function initSocialAuth() {
     if (googleInitialised) return;
@@ -180,6 +179,15 @@ function initSocialAuth() {
                     handleSocialToken('google', response.credential);
                 },
             });
+            // Render the SDK button off-screen so we can programmatically
+            // click it from our styled button.
+            const offscreen = document.getElementById('google-sdk-offscreen');
+            if (offscreen) {
+                google.accounts.id.renderButton(offscreen, {
+                    type: 'standard',
+                    size: 'large',
+                });
+            }
             googleInitialised = true;
         }
     }
@@ -187,13 +195,18 @@ function initSocialAuth() {
 
 // Google Sign in — triggered by our styled button's onclick.
 function googleSignIn() {
+    if (!googleInitialised) initSocialAuth();
     if (!googleInitialised) {
-        initSocialAuth();
-    }
-    if (googleInitialised) {
-        google.accounts.id.prompt();
-    } else {
         showAuthError('Google Sign-In is loading. Try again in a moment.');
+        return;
+    }
+    // Click the off-screen SDK button to trigger the popup.
+    const sdkBtn = document.querySelector('#google-sdk-offscreen div[role="button"]');
+    if (sdkBtn) {
+        sdkBtn.click();
+    } else {
+        // Fallback to One Tap.
+        google.accounts.id.prompt();
     }
 }
 
