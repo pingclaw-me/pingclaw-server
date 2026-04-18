@@ -31,24 +31,33 @@ import (
 )
 
 type Handler struct {
-	db       *sql.DB
-	rdb      *redis.Client
-	verifier *socialauth.Verifier
-	limiter  *ratelimit.Limiter
-	cfg      RateLimitConfig
-	oauth    OAuthConfig
+	db          *sql.DB
+	rdb         *redis.Client
+	verifier    *socialauth.Verifier
+	limiter     *ratelimit.Limiter // 1-hour window (sign-in)
+	limiterFast *ratelimit.Limiter // 1-minute window (location)
+	cfg         RateLimitConfig
+	oauth       OAuthConfig
 }
 
-// RateLimitConfig sets the per-window event caps for sign-in.
+// RateLimitConfig sets the per-window event caps.
 type RateLimitConfig struct {
-	PerIPPerHour int
+	PerIPPerHour          int
+	LocationPostPerMinute int // per-user POST /location cap (default 30)
+	LocationGetPerMinute  int // per-user GET /location cap (default 60)
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
+func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, limiterFast *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
 	if cfg.PerIPPerHour <= 0 {
 		cfg.PerIPPerHour = 10
 	}
-	return &Handler{db: db, rdb: rdb, verifier: verifier, limiter: limiter, cfg: cfg, oauth: oauth}
+	if cfg.LocationPostPerMinute <= 0 {
+		cfg.LocationPostPerMinute = 30
+	}
+	if cfg.LocationGetPerMinute <= 0 {
+		cfg.LocationGetPerMinute = 60
+	}
+	return &Handler{db: db, rdb: rdb, verifier: verifier, limiter: limiter, limiterFast: limiterFast, cfg: cfg, oauth: oauth}
 }
 
 // locationTTL is how long a location data point survives in Redis after
@@ -177,6 +186,7 @@ func (h *Handler) SocialAuth(w http.ResponseWriter, r *http.Request) {
 	// Per-IP rate limit.
 	ip := clientIP(r)
 	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:ip:"+ip, h.cfg.PerIPPerHour); !ok {
+		slog.Warn("[PINGCLAW RATE] sign-in rate limited", "ip", ip, "retry_after", retryAfter)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		writeError(w, 429, "too many sign-in attempts — try again later")
 		return
@@ -300,6 +310,7 @@ func (h *Handler) WebLogin(w http.ResponseWriter, r *http.Request) {
 	// Per-IP rate limit.
 	ip := clientIP(r)
 	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:ip:"+ip, h.cfg.PerIPPerHour); !ok {
+		slog.Warn("[PINGCLAW RATE] web-login rate limited", "ip", ip, "retry_after", retryAfter)
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		writeError(w, 429, "too many attempts — try again later")
 		return
@@ -329,12 +340,16 @@ func (h *Handler) WebLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
 	var apiKeyCount, pairingCount int
-	_ = h.db.QueryRowContext(r.Context(),
+	if err := h.db.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM user_tokens WHERE user_id = $1 AND kind = 'api_key'`,
-		userID).Scan(&apiKeyCount)
-	_ = h.db.QueryRowContext(r.Context(),
+		userID).Scan(&apiKeyCount); err != nil {
+		slog.Warn("[PINGCLAW AUTH] GetMe: api_key count query failed", "user_id", userID, "error", err)
+	}
+	if err := h.db.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM user_tokens WHERE user_id = $1 AND kind = 'pairing_token'`,
-		userID).Scan(&pairingCount)
+		userID).Scan(&pairingCount); err != nil {
+		slog.Warn("[PINGCLAW AUTH] GetMe: pairing_token count query failed", "user_id", userID, "error", err)
+	}
 	writeJSON(w, 200, map[string]any{
 		"user_id":           userID,
 		"has_api_key":       apiKeyCount > 0,
@@ -407,6 +422,13 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
 
+	if ok, retryAfter, _ := h.limiterFast.Allow(r.Context(), "rl:loc:get:"+userID, h.cfg.LocationGetPerMinute); !ok {
+		slog.Warn("[PINGCLAW RATE] location GET rate limited", "user_id", userID, "retry_after", retryAfter)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, 429, "too many requests — try again later")
+		return
+	}
+
 	loc, err := h.readLocation(r.Context(), userID)
 	if err != nil {
 		slog.Error("location lookup failed", "error", err)
@@ -445,6 +467,13 @@ func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
+
+	if ok, retryAfter, _ := h.limiterFast.Allow(r.Context(), "rl:loc:post:"+userID, h.cfg.LocationPostPerMinute); !ok {
+		slog.Warn("[PINGCLAW RATE] location POST rate limited", "user_id", userID, "retry_after", retryAfter)
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, 429, "too many location updates — try again later")
+		return
+	}
 
 	var req struct {
 		Timestamp string `json:"timestamp"`
@@ -601,6 +630,10 @@ func (h *Handler) PutWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "url must be a valid http(s) URL")
 		return
 	}
+	if isPrivateHost(parsed.Hostname()) {
+		writeError(w, 400, "webhook URL must not point to a private or reserved address")
+		return
+	}
 
 	if _, err = h.db.ExecContext(r.Context(),
 		`INSERT INTO user_webhooks (user_id, url, secret) VALUES ($1, $2, $3)
@@ -671,7 +704,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request) {
 	status, err := fireUserWebhookSync(hookURL, secret, payload)
 	if err != nil {
 		slog.Warn("[PINGCLAW WEBHOOK] test delivery failed", "user_id", userID, "url", hookURL, "error", err)
-		writeError(w, 502, "delivery failed: "+err.Error())
+		writeError(w, 502, "webhook delivery failed")
 		return
 	}
 	slog.Info("[PINGCLAW WEBHOOK] test delivered", "user_id", userID, "url", hookURL, "status", status)
@@ -987,6 +1020,35 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuth(h.PutWebhook))
 	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuth(h.DeleteWebhook))
 	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuth(h.TestWebhook))
+}
+
+// isPrivateHost returns true if the hostname resolves to a private,
+// loopback, or link-local address. Used to prevent SSRF via webhook
+// URLs pointing at internal services.
+func isPrivateHost(hostname string) bool {
+	// Reject obvious local names.
+	lower := strings.ToLower(hostname)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+		return true
+	}
+
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		// If DNS fails, reject — fail closed.
+		return true
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return true
+		}
+		// Block metadata endpoints (169.254.0.0/16 covered by IsLinkLocalUnicast)
+	}
+	return false
 }
 
 // clientIP returns the best-guess client IP. Trusts X-Forwarded-For

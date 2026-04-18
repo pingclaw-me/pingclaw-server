@@ -14,7 +14,6 @@ import (
 	"context"
 	"database/sql"
 	"flag"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -38,7 +37,6 @@ func main() {
 	godotenv.Load()
 
 	port := envOrDefault("PORT", "8080")
-	logPath := envOrDefault("LOG_FILE", "logs/server.log")
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		slog.Error("DATABASE_URL not set — supply a PostgreSQL DSN (e.g. postgres://user:pass@host:5432/dbname)")
@@ -50,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLogging(logPath, *debug)
+	setupLogging(*debug)
 
 	db, err := initDB(dsn)
 	if err != nil {
@@ -85,8 +83,11 @@ func main() {
 		"google_ios_client_id_set", googleIOSClientID != "")
 
 	limiter := ratelimit.New(rdb, time.Hour)
+	limiterFast := ratelimit.New(rdb, time.Minute)
 	rlConfig := pingclaw.RateLimitConfig{
-		PerIPPerHour: envInt("RATE_LIMIT_IP_PER_HOUR", 10),
+		PerIPPerHour:          envInt("RATE_LIMIT_IP_PER_HOUR", 10),
+		LocationPostPerMinute: envInt("RATE_LIMIT_LOC_POST_PER_MIN", 30),
+		LocationGetPerMinute:  envInt("RATE_LIMIT_LOC_GET_PER_MIN", 60),
 	}
 	oauthConfig := pingclaw.OAuthConfig{
 		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
@@ -99,7 +100,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// PingClaw web dashboard + iOS app endpoints (under /pingclaw/)
-	pc := pingclaw.NewHandler(db, rdb, verifier, limiter, rlConfig, oauthConfig)
+	pc := pingclaw.NewHandler(db, rdb, verifier, limiter, limiterFast, rlConfig, oauthConfig)
 	pc.RegisterRoutes(mux)
 
 	// PingClaw MCP server — per-user, authenticated by the user's API key
@@ -135,7 +136,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir("web")))
 
 	slog.Info("listening", "port", port)
-	if err := http.ListenAndServe(":"+port, withCORS(mux)); err != nil {
+	if err := http.ListenAndServe(":"+port, withMaxBody(withCORS(mux))); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
@@ -158,22 +159,21 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func setupLogging(logPath string, debug bool) {
-	os.MkdirAll("logs", 0755)
+// withMaxBody limits request body size to prevent DoS via oversized payloads.
+func withMaxBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1 MB limit — generous for JSON payloads, blocks abuse.
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
+}
 
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		slog.Error("failed to open log file, using stdout only", "path", logPath, "error", err)
-		return
-	}
-
-	multi := io.MultiWriter(os.Stdout, logFile)
-
+func setupLogging(debug bool) {
 	level := slog.LevelInfo
 	if debug {
 		level = slog.LevelDebug
 	}
-	handler := slog.NewTextHandler(multi, &slog.HandlerOptions{Level: level})
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(handler))
 }
 
