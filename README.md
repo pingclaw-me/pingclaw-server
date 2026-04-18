@@ -64,8 +64,9 @@ PingClaw API (used by the iOS app and the dashboard JS):
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/pingclaw/auth/send-code` | request an SMS code (printed to server log) |
-| POST | `/pingclaw/auth/verify-code` | exchange code for a `web_session` token |
+| POST | `/pingclaw/auth/social` | verify Apple/Google identity token, issue `pairing_token` (iOS) or `web_session` (web) |
+| POST | `/pingclaw/auth/web-login` | exchange a phone-generated code for a `web_session` |
+| POST | `/pingclaw/auth/web-code` | (auth'd) generate an 8-char code the user types into the web dashboard |
 | GET  | `/pingclaw/auth/me` | which token kinds the user has |
 | GET  | `/pingclaw/auth/data` | full data export (transparency view) |
 | POST | `/pingclaw/auth/rotate-api-key` | mint/rotate the `api_key` |
@@ -84,11 +85,11 @@ Everything runs from environment variables (see `.env.example`):
 - `DATABASE_URL` — PostgreSQL DSN (required, no default)
 - `REDIS_URL` — Redis DSN (required; stores location data with a 24-hour TTL)
 - `LOG_FILE` — server log (default `logs/server.log`)
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` — SMS delivery via Twilio. When unset, verification codes are written to the server log instead of being SMS'd — convenient for development. On trial Twilio accounts, only manually verified phone numbers can receive messages.
-- `RATE_LIMIT_PHONE_PER_HOUR` — max code sends per phone per hour (default `3`)
-- `RATE_LIMIT_IP_PER_HOUR` — max code sends per IP per hour (default `10`)
+- `APPLE_BUNDLE_ID` — the iOS bundle ID used as the JWT audience for Apple Sign-In (default `me.pingclaw.app`)
+- `GOOGLE_CLIENT_ID` — the OAuth client ID from Google Cloud Console (required for Google Sign-In)
+- `RATE_LIMIT_IP_PER_HOUR` — max sign-in attempts per IP per hour (default `10`)
 
-Sign-in is currently restricted to US and Canada (+1) phone numbers.
+Sign-in uses Apple and Google identity tokens — no phone number or SMS.
 
 Run with `--debug` to bump log level to debug.
 

@@ -16,8 +16,11 @@
     <main>
         <nav class="pc-nav pc-nav-static">
             <div class="pc-nav-inner">
-                <a class="pc-wordmark pc-wordmark-stacked" href="/">
-                    <span class="pc-wordmark-ping">Ping</span><span class="pc-wordmark-claw">Claw</span>
+                <a href="/">
+                    <picture>
+                        <source srcset="/wordmark.png?v=1" media="(prefers-color-scheme: dark)">
+                        <img src="/wordmark-light.png?v=1" alt="PingClaw" class="pc-nav-wordmark">
+                    </picture>
                 </a>
                 <div class="pc-nav-spacer"></div>
                 <a class="pc-nav-link" href="/">Back</a>
@@ -39,5 +42,11 @@
         <p>Location context for AI</p>
         <p style="margin-top: 8px;">© 2026 Christian Reimer</p>
     </footer>
+    <script>
+    if (new URLSearchParams(location.search).has('embedded')) {
+        document.querySelector('.pc-nav')?.remove();
+        document.querySelector('.pc-footer')?.remove();
+    }
+    </script>
 </body>
 </html>

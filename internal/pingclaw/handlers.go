@@ -27,40 +27,29 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
-	"github.com/pingclaw-me/pingclaw-server/internal/sms"
+	"github.com/pingclaw-me/pingclaw-server/internal/socialauth"
 )
 
 type Handler struct {
-	db      *sql.DB
-	rdb     *redis.Client
-	sms     *sms.Client       // nil in dev → log code instead of sending SMS
-	limiter *ratelimit.Limiter
-	cfg     RateLimitConfig
+	db       *sql.DB
+	rdb      *redis.Client
+	verifier *socialauth.Verifier
+	limiter  *ratelimit.Limiter
+	cfg      RateLimitConfig
+	oauth    OAuthConfig
 }
 
 // RateLimitConfig sets the per-window event caps for sign-in.
 type RateLimitConfig struct {
-	PerPhonePerHour int
-	PerIPPerHour    int
+	PerIPPerHour int
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client, smsClient *sms.Client, limiter *ratelimit.Limiter, cfg RateLimitConfig) *Handler {
-	if cfg.PerPhonePerHour <= 0 {
-		cfg.PerPhonePerHour = 3
-	}
+func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
 	if cfg.PerIPPerHour <= 0 {
 		cfg.PerIPPerHour = 10
 	}
-	return &Handler{db: db, rdb: rdb, sms: smsClient, limiter: limiter, cfg: cfg}
+	return &Handler{db: db, rdb: rdb, verifier: verifier, limiter: limiter, cfg: cfg, oauth: oauth}
 }
-
-// --- Verification code store (Redis, 10-minute TTL) ---
-
-const codeTTL = 10 * time.Minute
-
-// codeKey is the Redis key for a pending verification code, keyed by
-// the SHA-256 hash of the phone number (no plaintext phone in Redis).
-func codeKey(phoneHash string) string { return "code:" + phoneHash }
 
 // locationTTL is how long a location data point survives in Redis after
 // it's written. Per the privacy policy, locations expire automatically
@@ -138,160 +127,219 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func normalizePhone(p string) string {
-	// Strip spaces, dashes, parens — keep + and digits.
-	var sb strings.Builder
-	for _, c := range p {
-		if c == '+' || (c >= '0' && c <= '9') {
-			sb.WriteRune(c)
-		}
+// webCodeTTL is how long a web-login code survives in Redis.
+const webCodeTTL = 5 * time.Minute
+
+// webCodeKey is the Redis key for a pending web-login code.
+func webCodeKey(code string) string { return "webcode:" + code }
+
+// generateWebCode returns an 8-char uppercase alphanumeric code (letters
+// + digits, no ambiguous chars like 0/O/I/1).
+func generateWebCode() string {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // skip 0,O,I,1
+	b := make([]byte, 8)
+	rand.Read(b)
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
-	return sb.String()
+	return string(b)
 }
 
 // --- Auth endpoints ---
 
-func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
+// SocialAuth handles sign-in via Apple or Google. The client SDKs
+// (iOS AuthenticationServices, Google Sign-In, or web JS SDKs) do the
+// interactive authentication and give us a JWT id_token. We verify it,
+// find-or-create the user, and issue a token.
+//
+//	POST /pingclaw/auth/social
+//	{ "provider": "apple"|"google", "id_token": "<JWT>", "client": "ios"|"web" }
+func (h *Handler) SocialAuth(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PhoneNumber string `json:"phone_number"`
+		Provider string `json:"provider"`
+		IDToken  string `json:"id_token"`
+		Client   string `json:"client"` // "ios" → pairing_token, "web" → web_session
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid request body")
 		return
 	}
-	phone := normalizePhone(req.PhoneNumber)
-	if len(phone) < 8 {
-		writeError(w, 400, "valid phone number required")
+	provider := socialauth.Provider(req.Provider)
+	if provider != socialauth.ProviderApple && provider != socialauth.ProviderGoogle {
+		writeError(w, 400, "provider must be 'apple' or 'google'")
 		return
 	}
-	// US/CA only at launch — both share the +1 country code (NANP).
-	// We're not unpacking the area code beyond that; the wider NANP
-	// (Caribbean) is out of scope but acceptable to allow at this stage.
-	if !strings.HasPrefix(phone, "+1") {
-		writeError(w, 400, "only US and Canada phone numbers are supported")
+	if req.IDToken == "" {
+		writeError(w, 400, "id_token is required")
 		return
 	}
 
-	phoneHash := hashToken(phone)
-
-	// Per-phone rate limit. We rate-limit on the hash so the limiter
-	// keys are themselves anonymous.
-	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:phone:"+phoneHash, h.cfg.PerPhonePerHour); !ok {
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		writeError(w, 429, "too many code requests for this phone number — try again later")
-		return
-	}
-	// Per-IP rate limit. Catches an attacker spraying many phone numbers
-	// from one source.
+	// Per-IP rate limit.
 	ip := clientIP(r)
 	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:ip:"+ip, h.cfg.PerIPPerHour); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		writeError(w, 429, "too many code requests from this network — try again later")
+		writeError(w, 429, "too many sign-in attempts — try again later")
 		return
 	}
 
-	code := generateCode()
-	if err := h.rdb.Set(r.Context(), codeKey(phoneHash), code, codeTTL).Err(); err != nil {
-		slog.Error("code store failed", "error", err)
+	// Verify the JWT with the provider's public keys.
+	identity, err := h.verifier.Verify(r.Context(), provider, req.IDToken)
+	if err != nil {
+		slog.Warn("[PINGCLAW AUTH] social token rejected", "provider", provider, "error", err)
+		writeError(w, 401, "identity verification failed")
+		return
+	}
+
+	// Find or create the user.
+	userID, err := h.findOrCreateSocialUser(r.Context(), identity)
+	if err != nil {
+		slog.Error("[PINGCLAW AUTH] user upsert failed", "error", err)
 		writeError(w, 500, "internal error")
 		return
 	}
 
-	body := fmt.Sprintf("Your PingClaw verification code is %s. It expires in 10 minutes.", code)
-
-	if h.sms != nil {
-		if err := h.sms.Send(r.Context(), phone, body); err != nil {
-			slog.Error("[PINGCLAW SMS] delivery failed", "error", err)
-			writeError(w, 502, "could not send verification code")
+	// Issue the right token kind based on the calling client.
+	if req.Client == "ios" {
+		pt, err := h.rotateToken(r.Context(), userID, "pairing_token", "pt_")
+		if err != nil {
+			slog.Error("issue pairing_token failed", "user_id", userID, "error", err)
+			writeError(w, 500, "internal error")
 			return
 		}
-		// Log the suffix so the operator can correlate without seeing
-		// the full number. The code is NOT logged when SMS is on.
-		suffix := "..." + phone[len(phone)-4:]
-		slog.Info("[PINGCLAW SMS] delivered", "phone_suffix", suffix)
 		writeJSON(w, 200, map[string]string{
-			"status":  "sent",
-			"message": "Verification code sent.",
+			"pairing_token": pt,
+			"user_id":       userID,
 		})
 		return
 	}
 
-	// Dev fallback — no SMS provider configured. Log the code so the
-	// operator can hand it to the user out-of-band. Phone is redacted.
-	suffix := "..." + phone[len(phone)-4:]
-	slog.Info("[PINGCLAW SMS] dev-mode (no provider) — code in log",
-		"phone_suffix", suffix, "code", code)
-	writeJSON(w, 200, map[string]string{
-		"status":  "sent",
-		"message": "Verification code sent — check the server log (no SMS provider configured).",
-	})
-}
-
-func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PhoneNumber string `json:"phone_number"`
-		Code        string `json:"code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid request body")
-		return
-	}
-	phone := normalizePhone(req.PhoneNumber)
-	code := strings.TrimSpace(req.Code)
-	if phone == "" || code == "" {
-		writeError(w, 401, "invalid or expired code")
-		return
-	}
-	phoneHash := hashToken(phone)
-
-	// GETDEL is atomic single-use: a successful verify burns the code so
-	// it can't be replayed. If the key is missing (expired or already
-	// used) we treat it identically to a wrong code.
-	stored, err := h.rdb.GetDel(r.Context(), codeKey(phoneHash)).Result()
-	if errors.Is(err, redis.Nil) || err != nil || stored != code {
-		writeError(w, 401, "invalid or expired code")
-		return
-	}
-
-	// The phone number is hashed before storage. We never persist the
-	// plaintext number — only the SHA-256 hash, used as a stable lookup
-	// key. This matches the privacy policy.
-	var userID string
-	err = h.db.QueryRowContext(r.Context(),
-		`SELECT user_id FROM users WHERE phone_number_hash = $1`, phoneHash).Scan(&userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		userID = "usr_" + uuid.New().String()[:12]
-		if _, err = h.db.ExecContext(r.Context(),
-			`INSERT INTO users (user_id, phone_number_hash) VALUES ($1, $2)`,
-			userID, phoneHash); err != nil {
-			slog.Error("user insert failed", "error", err)
-			writeError(w, 500, "internal error")
-			return
-		}
-	} else if err != nil {
-		slog.Error("user lookup failed", "error", err)
-		writeError(w, 500, "internal error")
-		return
-	} else {
-		if _, err = h.db.ExecContext(r.Context(),
-			`UPDATE users SET updated_at = now() WHERE user_id = $1`,
-			userID); err != nil {
-			slog.Error("user update failed", "error", err)
-			writeError(w, 500, "internal error")
-			return
-		}
-	}
-
-	// Rotate the web session: delete any previous web_session tokens for
-	// this user and issue a fresh one. Result: at most one active dashboard
-	// session per user. The api_key and pairing_token are untouched.
+	// Default: web client → issue web_session.
 	session, err := h.rotateToken(r.Context(), userID, "web_session", "ws_")
 	if err != nil {
 		slog.Error("issue web_session failed", "user_id", userID, "error", err)
 		writeError(w, 500, "internal error")
 		return
 	}
+	writeJSON(w, 200, map[string]string{
+		"web_session": session,
+		"user_id":     userID,
+	})
+}
 
+// findOrCreateSocialUser looks up user_identities by (provider, sub).
+// If not found, auto-links by email (when available) or creates a new user.
+func (h *Handler) findOrCreateSocialUser(ctx context.Context, id *socialauth.Identity) (string, error) {
+	// 1. Check if this exact provider+sub is already known.
+	var userID string
+	err := h.db.QueryRowContext(ctx,
+		`SELECT user_id FROM user_identities WHERE provider = $1 AND provider_sub = $2`,
+		string(id.Provider), id.Sub).Scan(&userID)
+	if err == nil {
+		// Known identity — bump updated_at on the user and return.
+		_, _ = h.db.ExecContext(ctx, `UPDATE users SET updated_at = now() WHERE user_id = $1`, userID)
+		return userID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	// 2. Not found. Try auto-link by email if we have one.
+	if id.Email != "" {
+		err = h.db.QueryRowContext(ctx,
+			`SELECT user_id FROM user_identities WHERE email = $1 LIMIT 1`,
+			id.Email).Scan(&userID)
+		if err == nil {
+			// Email match — link this new provider identity to the existing user.
+			if _, err = h.db.ExecContext(ctx,
+				`INSERT INTO user_identities (provider, provider_sub, user_id, email) VALUES ($1, $2, $3, $4)`,
+				string(id.Provider), id.Sub, userID, id.Email); err != nil {
+				return "", err
+			}
+			slog.Info("[PINGCLAW AUTH] auto-linked identity",
+				"provider", id.Provider, "user_id", userID, "email", id.Email)
+			return userID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
+
+	// 3. Brand-new user.
+	userID = "usr_" + uuid.New().String()[:12]
+	if _, err = h.db.ExecContext(ctx,
+		`INSERT INTO users (user_id) VALUES ($1)`, userID); err != nil {
+		return "", err
+	}
+	if _, err = h.db.ExecContext(ctx,
+		`INSERT INTO user_identities (provider, provider_sub, user_id, email) VALUES ($1, $2, $3, $4)`,
+		string(id.Provider), id.Sub, userID, id.Email); err != nil {
+		return "", err
+	}
+	slog.Info("[PINGCLAW AUTH] new user created",
+		"provider", id.Provider, "user_id", userID)
+	return userID, nil
+}
+
+// WebCode generates a short-lived code the user can type into the web
+// dashboard to sign in there without needing social auth on the browser.
+// The phone must already be authenticated.
+//
+//	POST /pingclaw/auth/web-code   (requireAuth)
+func (h *Handler) WebCode(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+
+	code := generateWebCode()
+	if err := h.rdb.Set(r.Context(), webCodeKey(code), userID, webCodeTTL).Err(); err != nil {
+		slog.Error("web code store failed", "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{
+		"code":       code,
+		"expires_in": int(webCodeTTL.Seconds()),
+	})
+}
+
+// WebLogin lets a web browser sign in by submitting a code generated
+// on the phone (via WebCode).
+//
+//	POST /pingclaw/auth/web-login   (public)
+func (h *Handler) WebLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	code := strings.TrimSpace(strings.ToUpper(req.Code))
+	if code == "" {
+		writeError(w, 401, "invalid or expired code")
+		return
+	}
+
+	// Per-IP rate limit.
+	ip := clientIP(r)
+	if ok, retryAfter, _ := h.limiter.Allow(r.Context(), "rl:ip:"+ip, h.cfg.PerIPPerHour); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, 429, "too many attempts — try again later")
+		return
+	}
+
+	// GETDEL: single-use. A used or expired code returns 401.
+	userID, err := h.rdb.GetDel(r.Context(), webCodeKey(code)).Result()
+	if errors.Is(err, redis.Nil) || err != nil || userID == "" {
+		writeError(w, 401, "invalid or expired code")
+		return
+	}
+
+	session, err := h.rotateToken(r.Context(), userID, "web_session", "ws_")
+	if err != nil {
+		slog.Error("issue web_session failed", "user_id", userID, "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
 	writeJSON(w, 200, map[string]string{
 		"web_session": session,
 		"user_id":     userID,
@@ -734,29 +782,55 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		CreatedAt string `json:"created_at"`
 		UpdatedAt string `json:"updated_at"`
 	}
+	type identityRow struct {
+		Provider    string `json:"provider"`
+		ProviderSub string `json:"provider_sub"`
+		Email       string `json:"email,omitempty"`
+		CreatedAt   string `json:"created_at"`
+	}
 	type response struct {
-		UserID          string       `json:"user_id"`
-		PhoneNumberHash string       `json:"phone_number_hash"`
-		CreatedAt       string       `json:"created_at"`
-		UpdatedAt       string       `json:"updated_at"`
-		Tokens          []tokenRow   `json:"tokens"`
-		Location        *locationRow `json:"location"`
-		Webhook         *webhookRow  `json:"webhook"`
+		UserID     string        `json:"user_id"`
+		CreatedAt  string        `json:"created_at"`
+		UpdatedAt  string        `json:"updated_at"`
+		Identities []identityRow `json:"identities"`
+		Tokens     []tokenRow    `json:"tokens"`
+		Location   *locationRow  `json:"location"`
+		Webhook    *webhookRow   `json:"webhook"`
 	}
 
-	resp := response{UserID: userID, Tokens: []tokenRow{}}
+	resp := response{UserID: userID, Tokens: []tokenRow{}, Identities: []identityRow{}}
 
 	// User row
 	var userCreated, userUpdated time.Time
 	if err := h.db.QueryRowContext(r.Context(),
-		`SELECT phone_number_hash, created_at, updated_at FROM users WHERE user_id = $1`,
-		userID).Scan(&resp.PhoneNumberHash, &userCreated, &userUpdated); err != nil {
+		`SELECT created_at, updated_at FROM users WHERE user_id = $1`,
+		userID).Scan(&userCreated, &userUpdated); err != nil {
 		slog.Error("data export: user lookup failed", "user_id", userID, "error", err)
 		writeError(w, 500, "internal error")
 		return
 	}
 	resp.CreatedAt = userCreated.UTC().Format(time.RFC3339)
 	resp.UpdatedAt = userUpdated.UTC().Format(time.RFC3339)
+
+	// Identities
+	idRows, idErr := h.db.QueryContext(r.Context(),
+		`SELECT provider, provider_sub, email, created_at
+		   FROM user_identities WHERE user_id = $1 ORDER BY created_at`, userID)
+	if idErr == nil {
+		defer idRows.Close()
+		for idRows.Next() {
+			var row identityRow
+			var email sql.NullString
+			var created time.Time
+			if err := idRows.Scan(&row.Provider, &row.ProviderSub, &email, &created); err == nil {
+				row.CreatedAt = created.UTC().Format(time.RFC3339)
+				if email.Valid {
+					row.Email = email.String
+				}
+				resp.Identities = append(resp.Identities, row)
+			}
+		}
+	}
 
 	// Tokens
 	rows, err := h.db.QueryContext(r.Context(),
@@ -840,17 +914,23 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Public auth endpoints
-	mux.HandleFunc("POST /pingclaw/auth/send-code", h.SendCode)
-	mux.HandleFunc("POST /pingclaw/auth/verify-code", h.VerifyCode)
+	mux.HandleFunc("POST /pingclaw/auth/social", h.SocialAuth)
+	mux.HandleFunc("POST /pingclaw/auth/web-login", h.WebLogin)
 
 	// Authenticated endpoints
 	mux.HandleFunc("GET /pingclaw/auth/me", h.requireAuth(h.GetMe))
+	mux.HandleFunc("POST /pingclaw/auth/web-code", h.requireAuth(h.WebCode))
 	mux.HandleFunc("GET /pingclaw/location", h.requireAuth(h.GetLocation))
 	mux.HandleFunc("POST /pingclaw/location", h.requireAuth(h.PostLocation))
 	mux.HandleFunc("POST /pingclaw/auth/rotate-pairing-token", h.requireAuth(h.RotatePairingToken))
 	mux.HandleFunc("POST /pingclaw/auth/rotate-api-key", h.requireAuth(h.RotateAPIKey))
 	mux.HandleFunc("DELETE /pingclaw/auth/account", h.requireAuth(h.DeleteAccount))
 	mux.HandleFunc("GET /pingclaw/auth/data", h.requireAuth(h.GetMyData))
+
+	// OAuth 2.0 (ChatGPT GPT Actions and other OAuth consumers)
+	mux.HandleFunc("GET /pingclaw/oauth/authorize", h.OAuthAuthorize)
+	mux.HandleFunc("POST /pingclaw/oauth/authorize", h.OAuthAuthorize)
+	mux.HandleFunc("POST /pingclaw/oauth/token", h.OAuthToken)
 
 	// Outgoing webhook configuration (e.g. OpenClaw home agent)
 	mux.HandleFunc("GET /pingclaw/webhook", h.requireAuth(h.GetWebhook))

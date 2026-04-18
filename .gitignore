@@ -13,3 +13,6 @@ data/
 *.tmp
 *~
 .DS_Store
+
+# Go build artifacts from local testing.
+/pingclaw-server

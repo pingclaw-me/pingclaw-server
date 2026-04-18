@@ -65,6 +65,32 @@
   --pc-ease-out: cubic-bezier(0.0, 0.0, 0.2, 1);
 }
 
+@media (prefers-color-scheme: light) {
+  :root {
+    --pc-bg:        #f2f7f6;
+    --pc-surface:   #ffffff;
+    --pc-surface-2: #e8f0ee;
+    --pc-surface-3: #dce6e4;
+    --pc-border:    #c8d8d4;
+    --pc-border-2:  #b0c4be;
+    --pc-accent:    #009e82;
+    --pc-accent-2:  #007a66;
+    --pc-accent-3:  #e0f5f0;
+    --pc-accent-bg: #e8f8f4;
+    --pc-text:      #0a1e1a;
+    --pc-text-2:    #3d5c54;
+    --pc-text-3:    #6b8f86;
+    --pc-text-4:    #9bb5ae;
+    --pc-success:   #009e82;
+    --pc-warning:   #9e7a00;
+    --pc-warning-bg:#fdf6e0;
+    --pc-error:     #b83030;
+    --pc-error-bg:  #fdeaea;
+    --pc-info:      #2a7fb0;
+    --pc-info-bg:   #e8f4fc;
+  }
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; }
@@ -178,6 +204,17 @@ body {
 
 .pc-eyebrow-danger { color: var(--pc-error); }
 
+.pc-dash-section { margin-top: 32px; }
+
+.pc-step-label {
+  font-family: var(--pc-font-body);
+  font-size: var(--pc-type-sm);
+  font-weight: 600;
+  color: var(--pc-text);
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
 .pc-mono {
   font-family: var(--pc-font-mono);
   font-size: var(--pc-type-mono);
@@ -203,19 +240,17 @@ a:focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 2px; bord
 .pc-wordmark-ping { color: var(--pc-text); }
 .pc-wordmark-claw { color: var(--pc-accent); }
 
-/* Two-line variant: stacks Ping above Claw, hugged by tight line-height. */
-.pc-wordmark-stacked {
-  flex-direction: column;
-  align-items: flex-start;
-  line-height: 0.88;
-  letter-spacing: -0.04em;
+.pc-nav-wordmark {
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .pc-nav {
   position: sticky;
   top: 0;
   height: 56px;
-  background: rgba(8, 14, 12, 0.85);
+  background: color-mix(in srgb, var(--pc-bg) 85%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--pc-border);
@@ -392,7 +427,7 @@ label.pc-label {
   background: var(--pc-surface);
   border: 1px solid var(--pc-border);
   border-radius: var(--pc-radius-lg);
-  padding: 28px;
+  padding: 20px;
   transition:
     border-color var(--pc-duration-slow) var(--pc-ease-out),
     box-shadow var(--pc-duration-slow) var(--pc-ease-out);
@@ -512,7 +547,7 @@ label.pc-label {
 .pc-location-sep { color: var(--pc-text-4); }
 .pc-location-accuracy {
   font-family: var(--pc-font-mono);
-  font-size: 11px;
+  font-size: 14px;
   color: var(--pc-text-3);
   letter-spacing: 0.02em;
 }
@@ -597,18 +632,16 @@ label.pc-label {
   display: block;
   flex-shrink: 0;
 }
+.pc-hero-img {
+  max-width: min(90vw, 720px);
+  height: auto;
+  display: inline-block;
+}
 .pc-hero-text {
   text-align: left;
   display: flex;
   flex-direction: column;
 }
-.pc-hero-stacked {
-  display: flex;
-  flex-direction: column;
-  line-height: 0.88;
-  letter-spacing: -0.05em;
-}
-.pc-hero-stacked > span { display: block; }
 .pc-hero-text .pc-tagline {
   color: var(--pc-text-2);
   margin-top: 20px;
@@ -621,7 +654,6 @@ label.pc-label {
   .pc-hero-wrap { padding: 80px 20px 64px; }
   .pc-hero-mark { gap: 20px; }
   .pc-hero-text, .pc-hero-text .pc-tagline { text-align: center; }
-  .pc-hero-stacked { align-items: center; }
 }
 
 /* ----- Story / step grids (kept simple) ----- */
@@ -688,6 +720,39 @@ label.pc-label {
   padding: 1px 6px;
   border-radius: var(--pc-radius-sm);
 }
+
+/* ----- Social sign-in buttons ----- */
+
+.pc-social-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 50px;
+  border-radius: var(--pc-radius-md);
+  font-family: var(--pc-font-body);
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: opacity var(--pc-duration-base);
+}
+.pc-social-btn:hover { opacity: 0.9; }
+.pc-social-btn:active { opacity: 0.8; }
+
+.pc-social-apple {
+  background: var(--pc-surface);
+  color: var(--pc-text);
+  border: 1px solid var(--pc-border);
+}
+
+.pc-social-google {
+  background: var(--pc-surface);
+  color: var(--pc-text);
+  border: 1px solid var(--pc-border);
+}
+
 
 /* ----- Footer ----- */
 

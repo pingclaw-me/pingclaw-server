@@ -27,7 +27,7 @@ import (
 	"github.com/pingclaw-me/pingclaw-server/internal/mdpage"
 	"github.com/pingclaw-me/pingclaw-server/internal/pingclaw"
 	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
-	"github.com/pingclaw-me/pingclaw-server/internal/sms"
+	"github.com/pingclaw-me/pingclaw-server/internal/socialauth"
 	"github.com/joho/godotenv"
 )
 
@@ -68,31 +68,38 @@ func main() {
 	defer rdb.Close()
 	slog.Info("redis initialised")
 
-	// SMS provider (Twilio). Optional — when unset, SendCode falls back
-	// to logging the verification code so dev installs work without a
-	// Twilio account.
-	var smsClient *sms.Client
-	if sid := os.Getenv("TWILIO_ACCOUNT_SID"); sid != "" {
-		smsClient = sms.New(
-			sid,
-			os.Getenv("TWILIO_AUTH_TOKEN"),
-			os.Getenv("TWILIO_FROM_NUMBER"),
-		)
-		slog.Info("twilio sms enabled")
-	} else {
-		slog.Warn("TWILIO_ACCOUNT_SID not set — verification codes will be logged, not SMS'd")
-	}
+	// Social auth (Apple + Google). Tokens can arrive from iOS or web,
+	// each with a different audience (client ID), so we accept both.
+	appleBundleID := envOrDefault("APPLE_BUNDLE_ID", "me.pingclaw.app")
+	appleWebServiceID := os.Getenv("APPLE_WEB_SERVICE_ID")
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleIOSClientID := os.Getenv("GOOGLE_IOS_CLIENT_ID")
+	verifier := socialauth.New(
+		[]string{appleBundleID, appleWebServiceID},
+		[]string{googleClientID, googleIOSClientID},
+	)
+	slog.Info("social auth initialised",
+		"apple_bundle_id", appleBundleID,
+		"apple_web_service_id_set", appleWebServiceID != "",
+		"google_client_id_set", googleClientID != "",
+		"google_ios_client_id_set", googleIOSClientID != "")
 
 	limiter := ratelimit.New(rdb, time.Hour)
 	rlConfig := pingclaw.RateLimitConfig{
-		PerPhonePerHour: envInt("RATE_LIMIT_PHONE_PER_HOUR", 3),
-		PerIPPerHour:    envInt("RATE_LIMIT_IP_PER_HOUR", 10),
+		PerIPPerHour: envInt("RATE_LIMIT_IP_PER_HOUR", 10),
+	}
+	oauthConfig := pingclaw.OAuthConfig{
+		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
+		ClientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
+	}
+	if oauthConfig.ClientID != "" {
+		slog.Info("oauth enabled", "client_id", oauthConfig.ClientID)
 	}
 
 	mux := http.NewServeMux()
 
 	// PingClaw web dashboard + iOS app endpoints (under /pingclaw/)
-	pc := pingclaw.NewHandler(db, rdb, smsClient, limiter, rlConfig)
+	pc := pingclaw.NewHandler(db, rdb, verifier, limiter, rlConfig, oauthConfig)
 	pc.RegisterRoutes(mux)
 
 	// PingClaw MCP server — per-user, authenticated by the user's API key
@@ -211,26 +218,37 @@ func initDB(dsn string) (*sql.DB, error) {
 }
 
 func applySchema(db *sql.DB) error {
-	// users — phone number stored as SHA-256 hash so the server can do
-	// "is this number an existing user?" lookups without retaining the
-	// plaintext number. Auth credentials live in user_tokens.
+	// users — the core identity table. No phone number, no email — just
+	// the user_id. Social identities live in user_identities.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS users (
-		user_id           TEXT PRIMARY KEY,
-		phone_number_hash TEXT NOT NULL UNIQUE,
-		created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-		updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+		user_id    TEXT PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`); err != nil {
 		return err
 	}
 
-	// (Locations are stored in Redis with a 24-hour TTL — never persisted
-	// to Postgres. See internal/pingclaw/handlers.go and the LocationStore.)
-
-	// Drop the legacy locations table if it's still around from earlier
-	// builds. Idempotent; harmless on a fresh install.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS locations`); err != nil {
+	// user_identities — federated identity: one row per (provider, sub).
+	// A user can have multiple identities (e.g. Apple + Google), linked
+	// automatically by email when possible.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_identities (
+		provider      TEXT NOT NULL,
+		provider_sub  TEXT NOT NULL,
+		user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+		email         TEXT,
+		created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (provider, provider_sub)
+	)`); err != nil {
 		return err
 	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id)`)
+
+	// Clean up legacy tables from earlier schema versions.
+	db.Exec(`DROP TABLE IF EXISTS locations`) // locations are Redis-only now
+	// Drop the phone_number_hash column if it still exists (from pre-social-auth).
+	// ALTER ... DROP COLUMN is idempotent-safe: Postgres errors if column
+	// doesn't exist, which we ignore.
+	db.Exec(`ALTER TABLE users DROP COLUMN IF EXISTS phone_number_hash`)
 
 	// user_webhooks — per-user outgoing webhook (e.g. OpenClaw home agent).
 	// `secret` is the bearer PingClaw replays on outbound POSTs. Stored

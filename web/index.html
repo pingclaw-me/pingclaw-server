@@ -4,31 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PingClaw — Location context for AI</title>
+    <!-- Google OAuth client ID — populated at deploy time (or left empty to disable Google sign-in on web). -->
+    <meta name="google-client-id" content="829482463629-rn53ogdupf2nnjlt8ooi5unqquvn1vuu.apps.googleusercontent.com">
     <link rel="icon" type="image/png" sizes="any" href="/icon.png?v=6">
     <link rel="shortcut icon" href="/favicon.ico?v=6">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=6">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Sans:ital,wght@0,300;0,400;0,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=34">
+    <link rel="stylesheet" href="/style.css?v=41">
 </head>
 <body>
     <main>
         <!-- =================== Landing =================== -->
         <section id="landing">
             <div class="pc-hero-wrap">
-                <div class="pc-hero-mark pc-reveal pc-reveal-1">
-                    <img src="/icon.png?v=3" alt="" class="pc-hero-icon">
-                    <div class="pc-hero-text">
-                        <h1 class="pc-hero pc-hero-stacked">
-                            <span class="pc-wordmark-ping">Ping</span>
-                            <span class="pc-wordmark-claw">Claw</span>
-                        </h1>
-                        <p class="pc-tagline">Location context for AI</p>
-                    </div>
+                <div class="pc-reveal pc-reveal-1" style="text-align: center;">
+                    <picture>
+                        <source srcset="/hero.png?v=1" media="(prefers-color-scheme: dark)">
+                        <img src="/hero-light.png?v=1" alt="PingClaw — Location context for AI" class="pc-hero-img">
+                    </picture>
                 </div>
                 <div class="pc-cta pc-reveal pc-reveal-3">
-                    <button class="pc-btn-primary" onclick="showSection('auth')">Get started</button>
+                    <button class="pc-btn-primary" onclick="showSection('auth')">Sign in</button>
                 </div>
             </div>
 
@@ -39,12 +37,12 @@
                         <article class="pc-card">
                             <div class="pc-step-num">Step 01</div>
                             <h3 class="pc-card-title">Sign in</h3>
-                            <p class="pc-help" style="margin-top: 8px;">Verify your phone number to get a pairing token and an API key.</p>
+                            <p class="pc-help" style="margin-top: 8px;">Sign in with Apple or Google on the app or website to create your account and get an API key.</p>
                         </article>
                         <article class="pc-card">
                             <div class="pc-step-num">Step 02</div>
                             <h3 class="pc-card-title">Install the iOS app</h3>
-                            <p class="pc-help" style="margin-top: 8px;">Paste your pairing token. PingClaw runs in the background and shares your location with your assistant when needed.</p>
+                            <p class="pc-help" style="margin-top: 8px;">Sign in on the app and enable location sharing. PingClaw runs in the background and shares your location when needed.</p>
                         </article>
                         <article class="pc-card">
                             <div class="pc-step-num">Step 03</div>
@@ -64,9 +62,9 @@
                     <div class="pc-location-readout" style="margin-top: 32px;">
                         <div class="pc-location-label">Live readout</div>
                         <div class="pc-location-coords">
-                            <span>37.7749° N</span>
+                            <span>27.1396° S</span>
                             <span class="pc-location-sep"> · </span>
-                            <span>122.4194° W</span>
+                            <span>109.4270° W</span>
                         </div>
                         <div class="pc-location-accuracy">± 8m · Updated just now</div>
                     </div>
@@ -76,28 +74,40 @@
 
         <!-- =================== Auth =================== -->
         <section id="auth" hidden>
-            <div class="pc-container-narrow" style="padding-top: 64px; padding-bottom: 64px;">
+            <div class="pc-container-narrow" style="max-width: 400px; padding-top: 64px; padding-bottom: 64px;">
                 <div class="pc-eyebrow">Sign in</div>
-                <h2 class="pc-h2" style="margin-bottom: 24px;">Verify your phone</h2>
+                <h2 class="pc-h2" style="margin-bottom: 24px;">Choose how to sign in</h2>
 
-                <div class="pc-card">
-                    <div id="phone-step" class="pc-stack">
-                        <div>
-                            <label class="pc-label" for="phone">Phone number</label>
-                            <input type="tel" id="phone" placeholder="(212) 867-5309" autocomplete="tel">
-                            <p class="pc-help" style="margin-top: 8px;">US numbers assumed if no country code.</p>
-                            <p id="phone-error" class="pc-help pc-help-error" hidden></p>
-                        </div>
-                        <button class="pc-btn-primary pc-btn-block" onclick="sendCode()">Send code</button>
+                <div class="pc-card" style="display: flex; flex-direction: column; gap: 12px;">
+                    <!-- Apple — styled button (Apple JS SDK handles auth on click) -->
+                    <button class="pc-social-btn pc-social-apple" onclick="appleSignIn()">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="flex-shrink:0;">
+                            <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C3.79 16.17 4.36 9.02 8.83 8.76c1.24.07 2.1.72 2.83.78.99-.2 1.93-.77 2.98-.7 1.27.1 2.22.6 2.84 1.53-2.6 1.54-1.98 4.92.47 5.87-.56 1.47-1.28 2.93-2.9 4.04zM12.1 8.67c-.14-2.17 1.66-4.02 3.78-4.17.27 2.44-2.18 4.29-3.78 4.17z"/>
+                        </svg>
+                        <span>Sign in with Apple</span>
+                    </button>
+
+                    <!-- Google — custom styled button that triggers the SDK programmatically -->
+                    <button class="pc-social-btn pc-social-google" onclick="googleSignIn()">
+                        <svg viewBox="0 0 24 24" width="20" height="20" style="flex-shrink:0;">
+                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/>
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z"/>
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        <span>Sign in with Google</span>
+                    </button>
+
+                    <div class="pc-divider" style="margin: 8px 0;"></div>
+
+                    <!-- Code from phone -->
+                    <p class="pc-help">Already signed in on your phone? Enter the code from Settings.</p>
+                    <div class="pc-token-row">
+                        <input type="text" id="web-code-input" placeholder="Enter code" maxlength="8"
+                               style="text-transform: uppercase; font-family: var(--pc-font-mono); letter-spacing: 0.1em;">
+                        <button class="pc-btn-primary pc-btn-sm" onclick="webLogin()">Sign in</button>
                     </div>
-                    <div id="code-step" class="pc-stack" hidden>
-                        <div>
-                            <label class="pc-label" for="code">Verification code</label>
-                            <input type="text" id="code" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
-                            <p id="code-error" class="pc-help pc-help-error" hidden></p>
-                        </div>
-                        <button class="pc-btn-primary pc-btn-block" onclick="verifyCode()">Verify</button>
-                    </div>
+                    <p id="web-code-error" class="pc-help pc-help-error" style="margin-top: 4px;" hidden></p>
                 </div>
 
                 <p style="margin-top: 24px;">
@@ -110,8 +120,11 @@
         <section id="dashboard" hidden>
             <nav class="pc-nav pc-nav-static">
                 <div class="pc-nav-inner">
-                    <a class="pc-wordmark pc-wordmark-stacked" href="/">
-                        <span class="pc-wordmark-ping">Ping</span><span class="pc-wordmark-claw">Claw</span>
+                    <a href="/">
+                        <picture>
+                            <source srcset="/wordmark.png?v=1" media="(prefers-color-scheme: dark)">
+                            <img src="/wordmark-light.png?v=1" alt="PingClaw" class="pc-nav-wordmark">
+                        </picture>
                     </a>
                     <div class="pc-nav-spacer"></div>
                     <button class="pc-btn-ghost pc-btn-sm header-btn" onclick="handleHeaderBtn()">Sign in</button>
@@ -126,55 +139,13 @@
                     <div id="location-status" class="pc-location-empty">Locating…</div>
                 </div>
 
-                <!-- Setup -->
-                <div class="pc-eyebrow" style="margin-top: 40px;">Setup</div>
-                <div class="pc-card" style="display: flex; flex-direction: column; gap: 12px;">
-                    <div>
-                        <button class="pc-btn-ghost pc-btn-block" onclick="toggleSetupSub('ios')">
-                            <span id="setup-ios-label">Show iOS app setup</span>
-                        </button>
-                        <div id="setup-ios-content" class="pc-prose" style="display: none; margin-top: 12px;"></div>
-                    </div>
-                    <div>
-                        <button class="pc-btn-ghost pc-btn-block" onclick="toggleSetupSub('chatgpt')">
-                            <span id="setup-chatgpt-label">Show ChatGPT integration</span>
-                        </button>
-                        <div id="setup-chatgpt-content" class="pc-prose" style="display: none; margin-top: 12px;"></div>
-                    </div>
-                    <div>
-                        <button class="pc-btn-ghost pc-btn-block" onclick="toggleSetupSub('mcp')">
-                            <span id="setup-mcp-label">Show MCP configuration</span>
-                        </button>
-                        <div id="setup-mcp-content" class="pc-prose" style="display: none; margin-top: 12px;"></div>
-                    </div>
-                </div>
-
-                <!-- Pairing Token -->
-                <div class="pc-eyebrow" style="margin-top: 40px;">Pairing token</div>
-                <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">Used by the PingClaw iOS app. Shown only at creation and rotation — the server stores only a hash. Rotating revokes the previous token.</p>
-
-                    <div id="pairing-token-empty" style="display: none;">
-                        <button class="pc-btn-primary pc-btn-block" onclick="rotatePairingToken()">Generate pairing token</button>
-                    </div>
-
-                    <button id="pairing-token-pair-app" class="pc-btn-primary pc-btn-block" style="margin-bottom: 12px; display: none;" onclick="openInApp()">Sync to app</button>
-                    <div id="pairing-token-input-row" class="pc-token-row">
-                        <input type="text" id="pairing-token-display" readonly>
-                    </div>
-                    <div id="pairing-token-actions" class="pc-token-row" style="margin-top: 8px;">
-                        <button id="pairing-token-copy" class="pc-btn-ghost pc-btn-sm" onclick="copyToken('pairing')">Copy</button>
-                        <button id="pairing-token-rotate" class="pc-btn-danger pc-btn-sm" onclick="rotatePairingToken()">Rotate</button>
-                    </div>
-                </div>
-
                 <!-- API Key -->
-                <div class="pc-eyebrow" style="margin-top: 40px;">API key</div>
+                <div class="pc-eyebrow pc-dash-section">API key</div>
                 <div class="pc-card">
                     <p class="pc-help" style="margin-bottom: 16px;">Used by your AI agent. Shown only at creation and rotation — the server stores only a hash. Rotating breaks any agent using the previous key.</p>
 
                     <div id="api-key-empty" style="display: none;">
-                        <button class="pc-btn-primary pc-btn-block" onclick="rotateAPIKey()">Generate API key</button>
+                        <button class="pc-btn-primary pc-btn-sm" onclick="rotateAPIKey()">Generate API key</button>
                     </div>
 
                     <div id="api-key-input-row" class="pc-token-row">
@@ -186,12 +157,24 @@
                     </div>
                 </div>
 
+                <!-- Setup ChatGPT -->
+                <div class="pc-eyebrow pc-dash-section">ChatGPT</div>
+                <div class="pc-card">
+                    <div id="setup-chatgpt-content" class="pc-prose"></div>
+                    <a href="https://chatgpt.com/g/g-69e2d7fe797c8191ab8c0356f375daca-pingclaw"
+                       target="_blank" rel="noopener"
+                       class="pc-btn-primary pc-btn-block"
+                       style="text-align: center; text-decoration: none; margin-top: 16px;">
+                        Open PingClaw GPT
+                    </a>
+                </div>
+
                 <!-- MCP Config -->
-                <div class="pc-eyebrow" style="margin-top: 40px;">MCP config</div>
+                <div class="pc-eyebrow pc-dash-section">MCP config</div>
                 <div class="pc-card">
                     <div id="mcp-target-picker" style="display: none; margin-bottom: 12px;">
                         <label class="pc-label" for="mcp-target-select">Target client</label>
-                        <select id="mcp-target-select" class="pc-input" onchange="setMcpTarget(this.value)">
+                        <select id="mcp-target-select" class="pc-input" style="width: auto;" onchange="setMcpTarget(this.value)">
                             <option value="code">Claude Code</option>
                             <option value="desktop">Claude Desktop</option>
                             <option value="vscode">VS Code</option>
@@ -207,72 +190,74 @@
                 </div>
 
                 <!-- Webhook -->
-                <div class="pc-eyebrow" style="margin-top: 40px;">Webhook</div>
-                <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">Outbound endpoint PingClaw posts to whenever your phone reports a new location. Configured externally — for example by an OpenClaw home agent.</p>
+                <div class="pc-eyebrow pc-dash-section">Webhook</div>
 
-                    <button class="pc-btn-ghost pc-btn-block" style="margin-bottom: 16px;" onclick="toggleWebhookHelp()">
-                        <span id="webhook-help-toggle-label">Show webhook instructions</span>
-                    </button>
-                    <div id="webhook-help" style="display: none; margin-bottom: 16px;">
-                        <p class="pc-help" style="margin-bottom: 16px;">PingClaw POSTs each location update to a URL you control, with an <code>Authorization: Bearer &lt;secret&gt;</code> header your receiver can verify. The secret is supplied by you — PingClaw stores it and replays it on every fire.</p>
+                <!-- Webhook: setup instructions (hidden when a webhook is active) -->
+                <div id="webhook-setup" class="pc-card">
+                    <p class="pc-help" style="margin-bottom: 16px;">PingClaw POSTs each location update to a URL you control, with an <code>Authorization: Bearer &lt;secret&gt;</code> header your receiver can verify.</p>
 
-                        <h4 class="pc-h3" style="font-size: 16px; margin-bottom: 8px;">1. Export your API Key</h4>
-                        <p class="pc-help" style="margin-bottom: 8px;">Generate (or rotate) your API Key above, copy it, then set it in your shell:</p>
+                    <div class="pc-prose">
+                        <h4 class="pc-step-label">1. Export your API Key</h4>
+                        <p>Generate (or rotate) your API Key above, copy it, then set it in your shell:</p>
                         <div class="pc-token-row" style="margin-bottom: 16px;">
-                            <input type="text" readonly value="export PINGCLAW_TOKEN=ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                            <input type="text" id="webhook-token-example" readonly value="export PINGCLAW_TOKEN=ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
                             <button class="pc-btn-ghost pc-btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
                         </div>
 
-                        <h4 class="pc-h3" style="font-size: 16px; margin-bottom: 8px;">2. Pick a webhook secret</h4>
-                        <p class="pc-help" style="margin-bottom: 8px;">Any string works. PingClaw will replay it on every outbound POST so your receiver knows the request came from PingClaw:</p>
+                        <h4 class="pc-step-label">2. Pick a webhook secret</h4>
+                        <p>Any string works. PingClaw will replay it on every outbound POST so your receiver can verify it came from PingClaw:</p>
                         <div class="pc-token-row" style="margin-bottom: 16px;">
                             <input type="text" readonly value="export WEBHOOK_SECRET=$(openssl rand -hex 16)">
                             <button class="pc-btn-ghost pc-btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
                         </div>
 
-                        <h4 class="pc-h3" style="font-size: 16px; margin-bottom: 8px;">3. Register the webhook</h4>
-                        <p class="pc-help" style="margin-bottom: 8px;">Replace the URL below with your receiver, then run:</p>
-                        <div class="pc-token-row" style="margin-bottom: 0;">
+                        <h4 class="pc-step-label">3. Register the webhook</h4>
+                        <p>Replace the URL below with your receiver, then run:</p>
+                        <div class="pc-token-row">
                             <pre id="webhook-help-curl" class="pc-code-block" style="flex: 1; min-width: 0; margin: 0;"></pre>
                             <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookCurl(this)">Copy</button>
                         </div>
                     </div>
+                </div>
 
-                    <p id="webhook-empty" class="pc-help" style="display: none;">No webhook registered.</p>
-
-                    <div id="webhook-configured" style="display: none;">
-                        <div style="margin-bottom: 16px;">
-                            <label class="pc-label">URL</label>
-                            <div class="pc-token-row">
-                                <input type="text" id="webhook-url-display" readonly>
-                                <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('url')">Copy</button>
-                            </div>
+                <!-- Webhook: active config (hidden when no webhook is registered) -->
+                <div id="webhook-configured" class="pc-card" style="display: none; margin-top: 12px;">
+                    <div style="margin-bottom: 16px;">
+                        <label class="pc-label">URL</label>
+                        <div class="pc-token-row">
+                            <input type="text" id="webhook-url-display" readonly>
+                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('url')">Copy</button>
                         </div>
-                        <div style="margin-bottom: 16px;">
-                            <label class="pc-label">Secret</label>
-                            <div class="pc-token-row">
-                                <input type="text" id="webhook-secret-display" readonly>
-                                <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('secret')">Copy</button>
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="testWebhook()">Send test</button>
-                            <button class="pc-btn-danger pc-btn-sm" onclick="deleteWebhook()">Remove webhook</button>
-                        </div>
-                        <div id="webhook-test-status" class="pc-help" style="margin-bottom: 8px; display: none;"></div>
                     </div>
+                    <div style="margin-bottom: 16px;">
+                        <label class="pc-label">Secret</label>
+                        <div class="pc-token-row">
+                            <input type="text" id="webhook-secret-display" readonly>
+                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('secret')">Copy</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <button class="pc-btn-ghost pc-btn-sm" onclick="testWebhook()">Send test</button>
+                        <button class="pc-btn-danger pc-btn-sm" onclick="deleteWebhook()">Remove webhook</button>
+                    </div>
+                    <div id="webhook-test-status" class="pc-help" style="margin-bottom: 8px; display: none;"></div>
                 </div>
 
                 <!-- Your Data -->
-                <div class="pc-eyebrow pc-eyebrow-danger" style="margin-top: 40px;">Your data</div>
+                <div class="pc-eyebrow pc-dash-section">Your data</div>
                 <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">View every record the server stores about your account, or permanently delete it. Deletion cannot be undone.</p>
-                    <button id="my-data-toggle" class="pc-btn-ghost pc-btn-block" onclick="viewMyData()">View my data</button>
+                    <p class="pc-help" style="margin-bottom: 16px;">View every record the server stores about your account.</p>
+                    <button id="my-data-toggle" class="pc-btn-ghost pc-btn-sm" onclick="viewMyData()">View my data</button>
                     <div id="my-data-wrap" style="display: none; margin-top: 16px;">
                         <pre id="my-data-display" class="pc-code-block" style="max-height: 480px; overflow: auto;"></pre>
                     </div>
-                    <button class="pc-btn-danger pc-btn-sm" style="margin-top: 12px;" onclick="deleteAccount()">Delete account</button>
+                </div>
+
+                <!-- Delete Account -->
+                <div class="pc-eyebrow pc-dash-section pc-eyebrow-danger">Delete account</div>
+                <div class="pc-card">
+                    <p class="pc-help" style="margin-bottom: 16px;">Permanently delete your account and all stored data. This cannot be undone.</p>
+                    <button class="pc-btn-danger pc-btn-sm" onclick="deleteAccount()">Delete account</button>
                 </div>
             </div>
         </section>
@@ -287,6 +272,10 @@
         <p style="margin-top: 8px;">© 2026 Christian Reimer</p>
     </footer>
 
-    <script src="/app.js?v=37"></script>
+    <!-- Social sign-in SDKs (loaded async, only used on the auth page) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script type="text/javascript" src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js"></script>
+
+    <script src="/app.js?v=43"></script>
 </body>
 </html>

@@ -1,0 +1,55 @@
+# Deploy to Digital Ocean App Platform on every GitHub release.
+#
+# Trigger: create a release (or push a tag matching v*).
+# Pipeline: build Docker image → push to DO Container Registry → redeploy app.
+#
+# Required repository secrets:
+#   DIGITALOCEAN_ACCESS_TOKEN  — DO API token (read + write)
+#   DIGITALOCEAN_APP_ID        — App Platform app ID (from `doctl apps list`)
+#
+# The Container Registry name is derived from the repository name. If
+# yours differs, update the `env.REGISTRY` value below.
+
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ["v*"]
+
+env:
+  REGISTRY: registry.digitalocean.com/pingclaw
+  IMAGE_NAME: pingclaw-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Log in to DO Container Registry
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            .
+
+      - name: Push to registry
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to App Platform
+        run: |
+          doctl apps create-deployment ${{ secrets.DIGITALOCEAN_APP_ID }} --wait

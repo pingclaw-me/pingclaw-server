@@ -1,0 +1,11 @@
+.git
+.env
+.env.local
+data/
+logs/
+docs/
+*.md
+.DS_Store
+.gitignore
+.dockerignore
+.github/

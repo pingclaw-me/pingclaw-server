@@ -1,12 +1,12 @@
+*Last updated: April 17, 2026*
+
 ## What PingClaw does
 
 PingClaw sends your phone's GPS location to a server so your AI assistant can answer location-aware questions. You control when sharing is on or off.
 
-## Phone number
+## Sign-in
 
-Your phone number is used only to verify your identity at sign-up and at each subsequent sign-in. It is immediately converted into a form that cannot be reversed. PingClaw does not store, recover, view, or share your actual phone number.
-
-When you sign in, your phone number is sent to Twilio (our SMS delivery provider) so it can deliver the verification code. Twilio retains the number per their own privacy policy. PingClaw still does not store your plaintext phone number — only its hash.
+PingClaw uses Sign in with Apple and Sign in with Google for authentication. When you sign in, PingClaw receives a unique identifier from your provider but does not access your contacts, photos, or other account data. If you sign in with Apple and choose to hide your email, PingClaw never sees it. PingClaw does not collect or store your phone number.
 
 ## Location data
 
@@ -32,7 +32,7 @@ You can delete your account at any time from within the app or web dashboard. Th
 
 ## What is stored on the server
 
-- **Account data**: a unique ID, a SHA-256 hash of your phone number, your authentication tokens (stored as hashes), and — if you've configured one — your webhook URL and the secret you supplied. Plus the dates the account was created and last updated.
+- **Account data**: a unique ID, your linked sign-in identities (provider name and provider-issued identifier), your authentication tokens (stored as hashes), and — if you've configured one — your webhook URL and the secret you supplied. Plus the dates the account was created and last updated.
 - **Current location**: your most recent location only, automatically deleted after 24 hours.
 
 Standard web request metadata (IP address, User-Agent) may be observed by our hosting infrastructure; PingClaw does not durably store it in the application database.
