@@ -69,11 +69,8 @@ func (g *googleVerifier) verify(_ context.Context, idToken string) (*Identity, e
 		return nil, fmt.Errorf("google token: missing sub claim")
 	}
 
-	email, _ := claims["email"].(string)
-
 	return &Identity{
 		Provider: ProviderGoogle,
 		Sub:      sub,
-		Email:    email,
 	}, nil
 }

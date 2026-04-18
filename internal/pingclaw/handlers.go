@@ -227,15 +227,14 @@ func (h *Handler) SocialAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 // findOrCreateSocialUser looks up user_identities by (provider, sub).
-// If not found, auto-links by email (when available) or creates a new user.
+// If not found, creates a new user.
 func (h *Handler) findOrCreateSocialUser(ctx context.Context, id *socialauth.Identity) (string, error) {
-	// 1. Check if this exact provider+sub is already known.
+	// Check if this exact provider+sub is already known.
 	var userID string
 	err := h.db.QueryRowContext(ctx,
 		`SELECT user_id FROM user_identities WHERE provider = $1 AND provider_sub = $2`,
 		string(id.Provider), id.Sub).Scan(&userID)
 	if err == nil {
-		// Known identity — bump updated_at on the user and return.
 		_, _ = h.db.ExecContext(ctx, `UPDATE users SET updated_at = now() WHERE user_id = $1`, userID)
 		return userID, nil
 	}
@@ -243,36 +242,15 @@ func (h *Handler) findOrCreateSocialUser(ctx context.Context, id *socialauth.Ide
 		return "", err
 	}
 
-	// 2. Not found. Try auto-link by email if we have one.
-	if id.Email != "" {
-		err = h.db.QueryRowContext(ctx,
-			`SELECT user_id FROM user_identities WHERE email = $1 LIMIT 1`,
-			id.Email).Scan(&userID)
-		if err == nil {
-			// Email match — link this new provider identity to the existing user.
-			if _, err = h.db.ExecContext(ctx,
-				`INSERT INTO user_identities (provider, provider_sub, user_id, email) VALUES ($1, $2, $3, $4)`,
-				string(id.Provider), id.Sub, userID, id.Email); err != nil {
-				return "", err
-			}
-			slog.Info("[PINGCLAW AUTH] auto-linked identity",
-				"provider", id.Provider, "user_id", userID, "email", id.Email)
-			return userID, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
-	}
-
-	// 3. Brand-new user.
+	// Brand-new user.
 	userID = "usr_" + uuid.New().String()[:12]
 	if _, err = h.db.ExecContext(ctx,
 		`INSERT INTO users (user_id) VALUES ($1)`, userID); err != nil {
 		return "", err
 	}
 	if _, err = h.db.ExecContext(ctx,
-		`INSERT INTO user_identities (provider, provider_sub, user_id, email) VALUES ($1, $2, $3, $4)`,
-		string(id.Provider), id.Sub, userID, id.Email); err != nil {
+		`INSERT INTO user_identities (provider, provider_sub, user_id) VALUES ($1, $2, $3)`,
+		string(id.Provider), id.Sub, userID); err != nil {
 		return "", err
 	}
 	slog.Info("[PINGCLAW AUTH] new user created",
@@ -370,6 +348,10 @@ type ctxKey string
 
 const ctxUserID ctxKey = "user_id"
 
+const authCacheTTL = 5 * time.Minute
+
+func authCacheKey(hash string) string { return "auth:" + hash }
+
 func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -381,8 +363,16 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		hash := hashToken(token)
 
-		var userID string
-		err := h.db.QueryRowContext(r.Context(),
+		// Try Redis cache first.
+		userID, err := h.rdb.Get(r.Context(), authCacheKey(hash)).Result()
+		if err == nil && userID != "" {
+			r = r.WithContext(context.WithValue(r.Context(), ctxUserID, userID))
+			next(w, r)
+			return
+		}
+
+		// Cache miss — fall back to Postgres.
+		err = h.db.QueryRowContext(r.Context(),
 			`SELECT user_id FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID)
 		if errors.Is(err, sql.ErrNoRows) {
 			tokenPreview := token
@@ -399,6 +389,9 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, 500, "internal error")
 			return
 		}
+
+		// Cache the token→user_id mapping in Redis.
+		h.rdb.Set(r.Context(), authCacheKey(hash), userID, authCacheTTL)
 
 		// Best-effort last-used tracking; ignore errors.
 		_, _ = h.db.ExecContext(r.Context(),
@@ -514,13 +507,39 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 
 // --- Webhook endpoints ---
 
+const webhookCacheTTL = 5 * time.Minute
+const webhookCacheNone = "__none__" // sentinel: user has no webhook
+
+func webhookCacheKey(userID string) string { return "wh:" + userID }
+
 func (h *Handler) lookupWebhook(ctx context.Context, userID string) (hookURL, secret string, ok bool) {
-	err := h.db.QueryRowContext(ctx,
+	// Try Redis cache first.
+	cached, err := h.rdb.Get(ctx, webhookCacheKey(userID)).Result()
+	if err == nil {
+		if cached == webhookCacheNone {
+			return "", "", false
+		}
+		// Cached as "url\nsecret"
+		parts := strings.SplitN(cached, "\n", 2)
+		if len(parts) == 2 && parts[0] != "" {
+			return parts[0], parts[1], true
+		}
+	}
+
+	// Cache miss — fall back to Postgres.
+	err = h.db.QueryRowContext(ctx,
 		`SELECT url, secret FROM user_webhooks WHERE user_id = $1`, userID).Scan(&hookURL, &secret)
 	if err != nil || hookURL == "" {
+		h.rdb.Set(ctx, webhookCacheKey(userID), webhookCacheNone, webhookCacheTTL)
 		return "", "", false
 	}
+
+	h.rdb.Set(ctx, webhookCacheKey(userID), hookURL+"\n"+secret, webhookCacheTTL)
 	return hookURL, secret, true
+}
+
+func (h *Handler) invalidateWebhookCache(ctx context.Context, userID string) {
+	h.rdb.Del(ctx, webhookCacheKey(userID))
 }
 
 // fireUserWebhook POSTs the location payload to the user's configured webhook.
@@ -594,6 +613,7 @@ func (h *Handler) PutWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to save webhook")
 		return
 	}
+	h.invalidateWebhookCache(r.Context(), userID)
 	slog.Info("[PINGCLAW WEBHOOK] registered", "user_id", userID, "url", hookURL)
 	writeJSON(w, 200, map[string]string{
 		"status": "ok",
@@ -697,6 +717,7 @@ func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to delete webhook")
 		return
 	}
+	h.invalidateWebhookCache(r.Context(), userID)
 	slog.Info("[PINGCLAW WEBHOOK] removed", "user_id", userID)
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
@@ -706,6 +727,20 @@ func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 // rotateToken revokes ALL of the user's tokens of the given kind and
 // issues a new one. Other kinds are unaffected.
 func (h *Handler) rotateToken(ctx context.Context, userID, kind, prefix string) (string, error) {
+	// Collect old token hashes so we can invalidate their auth cache.
+	var oldHashes []string
+	rows, err := h.db.QueryContext(ctx,
+		`SELECT token_hash FROM user_tokens WHERE user_id = $1 AND kind = $2`, userID, kind)
+	if err == nil {
+		for rows.Next() {
+			var hash string
+			if rows.Scan(&hash) == nil {
+				oldHashes = append(oldHashes, hash)
+			}
+		}
+		rows.Close()
+	}
+
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -726,7 +761,15 @@ func (h *Handler) rotateToken(ctx context.Context, userID, kind, prefix string) 
 		`UPDATE users SET updated_at = now() WHERE user_id = $1`, userID); err != nil {
 		return "", err
 	}
-	return tok, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+
+	// Invalidate old token cache entries.
+	for _, hash := range oldHashes {
+		h.rdb.Del(ctx, authCacheKey(hash))
+	}
+	return tok, nil
 }
 
 func (h *Handler) RotatePairingToken(w http.ResponseWriter, r *http.Request) {
@@ -785,7 +828,6 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 	type identityRow struct {
 		Provider    string `json:"provider"`
 		ProviderSub string `json:"provider_sub"`
-		Email       string `json:"email,omitempty"`
 		CreatedAt   string `json:"created_at"`
 	}
 	type response struct {
@@ -814,19 +856,15 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 
 	// Identities
 	idRows, idErr := h.db.QueryContext(r.Context(),
-		`SELECT provider, provider_sub, email, created_at
+		`SELECT provider, provider_sub, created_at
 		   FROM user_identities WHERE user_id = $1 ORDER BY created_at`, userID)
 	if idErr == nil {
 		defer idRows.Close()
 		for idRows.Next() {
 			var row identityRow
-			var email sql.NullString
 			var created time.Time
-			if err := idRows.Scan(&row.Provider, &row.ProviderSub, &email, &created); err == nil {
+			if err := idRows.Scan(&row.Provider, &row.ProviderSub, &created); err == nil {
 				row.CreatedAt = created.UTC().Format(time.RFC3339)
-				if email.Valid {
-					row.Email = email.String
-				}
 				resp.Identities = append(resp.Identities, row)
 			}
 		}
@@ -894,10 +932,22 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
 
-	// Drop the Redis location cache first. Postgres delete cascades take
-	// care of user_tokens + user_webhooks, but the cached location is in
-	// a separate store and would otherwise linger until its 24h TTL.
-	// Best-effort: log but don't fail the delete if Redis is unavailable.
+	// Invalidate all auth cache entries for the user before deleting.
+	rows, err := h.db.QueryContext(r.Context(),
+		`SELECT token_hash FROM user_tokens WHERE user_id = $1`, userID)
+	if err == nil {
+		for rows.Next() {
+			var hash string
+			if rows.Scan(&hash) == nil {
+				h.rdb.Del(r.Context(), authCacheKey(hash))
+			}
+		}
+		rows.Close()
+	}
+
+	// Drop Redis caches. Postgres delete cascades take care of
+	// user_tokens + user_webhooks, but cached data would linger.
+	h.invalidateWebhookCache(r.Context(), userID)
 	if err := h.rdb.Del(r.Context(), locationKey(userID)).Err(); err != nil {
 		slog.Warn("delete: redis cache delete failed", "user_id", userID, "error", err)
 	}

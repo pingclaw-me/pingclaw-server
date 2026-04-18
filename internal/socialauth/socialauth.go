@@ -25,11 +25,9 @@ const (
 
 // Identity is the verified result of a social sign-in. Sub is the
 // provider's stable, opaque user identifier (the JWT "sub" claim).
-// Email may be empty — Apple lets users hide it.
 type Identity struct {
 	Provider Provider
 	Sub      string
-	Email    string
 }
 
 // Verifier validates identity tokens from Apple and Google.

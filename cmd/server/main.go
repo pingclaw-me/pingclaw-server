@@ -229,13 +229,10 @@ func applySchema(db *sql.DB) error {
 	}
 
 	// user_identities — federated identity: one row per (provider, sub).
-	// A user can have multiple identities (e.g. Apple + Google), linked
-	// automatically by email when possible.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_identities (
 		provider      TEXT NOT NULL,
 		provider_sub  TEXT NOT NULL,
 		user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-		email         TEXT,
 		created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
 		PRIMARY KEY (provider, provider_sub)
 	)`); err != nil {
@@ -243,12 +240,10 @@ func applySchema(db *sql.DB) error {
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id)`)
 
-	// Clean up legacy tables from earlier schema versions.
-	db.Exec(`DROP TABLE IF EXISTS locations`) // locations are Redis-only now
-	// Drop the phone_number_hash column if it still exists (from pre-social-auth).
-	// ALTER ... DROP COLUMN is idempotent-safe: Postgres errors if column
-	// doesn't exist, which we ignore.
+	// Clean up legacy columns/tables from earlier schema versions.
+	db.Exec(`DROP TABLE IF EXISTS locations`)
 	db.Exec(`ALTER TABLE users DROP COLUMN IF EXISTS phone_number_hash`)
+	db.Exec(`ALTER TABLE user_identities DROP COLUMN IF EXISTS email`)
 
 	// user_webhooks — per-user outgoing webhook (e.g. OpenClaw home agent).
 	// `secret` is the bearer PingClaw replays on outbound POSTs. Stored

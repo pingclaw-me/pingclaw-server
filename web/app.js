@@ -219,7 +219,7 @@ async function appleSignIn() {
     try {
         AppleID.auth.init({
             clientId: 'me.pingclaw.web',
-            scope: 'email',
+            scope: '',
             redirectURI: window.location.origin,
             usePopup: true,
         });

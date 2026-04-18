@@ -59,11 +59,8 @@ func (a *appleVerifier) verify(_ context.Context, idToken string) (*Identity, er
 		return nil, fmt.Errorf("apple token: missing sub claim")
 	}
 
-	email, _ := claims["email"].(string)
-
 	return &Identity{
 		Provider: ProviderApple,
 		Sub:      sub,
-		Email:    email,
 	}, nil
 }

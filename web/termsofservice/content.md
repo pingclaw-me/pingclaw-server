@@ -1,4 +1,4 @@
-*Last updated: April 17, 2026*
+*Last updated: April 18, 2026*
 
 ## Acceptance
 
@@ -6,11 +6,11 @@ By signing up for, downloading, or using PingClaw, you agree to these terms. If 
 
 ## What PingClaw is
 
-PingClaw is a personal location utility. The iOS app sends your phone's location to a PingClaw server (the hosted instance at pingclaw.me by default; users can self-host) so your AI assistant can answer location-aware questions. PingClaw is not a navigation, social, or sharing service.
+PingClaw is a personal location utility. The iOS and Android apps send your phone's location to a PingClaw server (the hosted instance at pingclaw.me by default; users can self-host) so your AI assistant can answer location-aware questions. PingClaw is not a navigation, social, or sharing service.
 
 ## Your account
 
-You are responsible for keeping your pairing token and API key confidential. Anyone in possession of these credentials can read your stored location and modify your account. Rotate them from the dashboard if you suspect either has been exposed.
+You are responsible for keeping your credentials confidential, including your pairing token (used by the mobile app), API key (used by your AI agent), and web session. Anyone in possession of these credentials can read your stored location and modify your account. Rotate them from the dashboard or app settings if you suspect any have been exposed.
 
 ## Acceptable use
 
