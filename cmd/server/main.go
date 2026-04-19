@@ -69,16 +69,14 @@ func main() {
 	// Social auth (Apple + Google). Tokens can arrive from iOS or web,
 	// each with a different audience (client ID), so we accept both.
 	appleBundleID := envOrDefault("APPLE_BUNDLE_ID", "me.pingclaw.app")
-	appleWebServiceID := os.Getenv("APPLE_WEB_SERVICE_ID")
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleIOSClientID := os.Getenv("GOOGLE_IOS_CLIENT_ID")
 	verifier := socialauth.New(
-		[]string{appleBundleID, appleWebServiceID},
+		[]string{appleBundleID},
 		[]string{googleClientID, googleIOSClientID},
 	)
 	slog.Info("social auth initialised",
 		"apple_bundle_id", appleBundleID,
-		"apple_web_service_id_set", appleWebServiceID != "",
 		"google_client_id_set", googleClientID != "",
 		"google_ios_client_id_set", googleIOSClientID != "")
 
@@ -88,6 +86,7 @@ func main() {
 		PerIPPerHour:          envInt("RATE_LIMIT_IP_PER_HOUR", 10),
 		LocationPostPerMinute: envInt("RATE_LIMIT_LOC_POST_PER_MIN", 30),
 		LocationGetPerMinute:  envInt("RATE_LIMIT_LOC_GET_PER_MIN", 60),
+		ChatGPTURL:            envOrDefault("CHATGPT_GPT_URL", ""),
 	}
 	oauthConfig := pingclaw.OAuthConfig{
 		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),

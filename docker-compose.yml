@@ -29,12 +29,12 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_FILE: logs/server.log
       APPLE_BUNDLE_ID: ${APPLE_BUNDLE_ID:-XTL-74JC6TTWQ8.me.pingclaw.app}
-      APPLE_WEB_SERVICE_ID: ${APPLE_WEB_SERVICE_ID:-me.pingclaw.web}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-339229829038-mmksusbqmd94mdlavc2ptqajgju9uuf7.apps.googleusercontent.com}
       GOOGLE_IOS_CLIENT_ID: ${GOOGLE_IOS_CLIENT_ID:-339229829038-hli9moca58el3r2sboog5545njfnqddd.apps.googleusercontent.com}
       RATE_LIMIT_IP_PER_HOUR: ${RATE_LIMIT_IP_PER_HOUR:-10}
       OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-pingclaw-gpt}
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+      CHATGPT_GPT_URL: ${CHATGPT_GPT_URL:-https://chatgpt.com/g/g-69e2d7fe797c8191ab8c0356f375daca-pingclaw}
     ports:
       # Bumped off the default 8080 to avoid colliding with a natively-run
       # server. Browse to http://localhost:8090.

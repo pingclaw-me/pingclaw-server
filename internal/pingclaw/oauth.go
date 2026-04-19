@@ -29,11 +29,11 @@ type oauthCodeData struct {
 }
 
 // OAuthAuthorize is the OAuth 2.0 authorization endpoint. ChatGPT
-// redirects the user here; if they're signed in (web_session cookie),
-// they see an approval page. On approve, PingClaw generates an auth
-// code and redirects back to ChatGPT's callback URL.
+// redirects the user here. The user enters a web code from their
+// phone app to identify themselves and approve the connection.
 //
-//	GET /pingclaw/oauth/authorize?client_id=...&redirect_uri=...&response_type=code&state=...
+//	GET  /pingclaw/oauth/authorize?client_id=...&redirect_uri=...&response_type=code&state=...
+//	POST /pingclaw/oauth/authorize  (form: client_id, redirect_uri, state, code)
 func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	clientID := r.URL.Query().Get("client_id")
 	redirectURI := r.URL.Query().Get("redirect_uri")
@@ -57,29 +57,44 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for a signed-in user via the web_session cookie.
-	userID := h.getUserFromCookie(r)
-	if userID == "" {
-		// Not signed in — show a page telling them to sign in first.
-		h.serveOAuthPage(w, map[string]any{
-			"SignedIn":    false,
-			"ClientID":   clientID,
-			"RedirectURI": redirectURI,
-			"State":       state,
-			"ServerURL":   serverURL(r),
-		})
-		return
-	}
-
-	// POST = user clicked Approve.
+	// POST = user submitted the web code from their phone.
 	if r.Method == http.MethodPost {
-		code := generateWebCode()
+		r.ParseForm()
+		webCode := strings.TrimSpace(strings.ToUpper(r.FormValue("code")))
+		clientID = r.FormValue("client_id")
+		redirectURI = r.FormValue("redirect_uri")
+		state = r.FormValue("state")
+
+		if webCode == "" {
+			h.serveOAuthPage(w, map[string]any{
+				"ClientID":    clientID,
+				"RedirectURI": redirectURI,
+				"State":       state,
+				"Error":       "Please enter a code from the PingClaw app.",
+			})
+			return
+		}
+
+		// Validate the web code (single-use, same as web-login).
+		userID, err := h.rdb.GetDel(r.Context(), webCodeKey(webCode)).Result()
+		if err != nil || userID == "" {
+			h.serveOAuthPage(w, map[string]any{
+				"ClientID":    clientID,
+				"RedirectURI": redirectURI,
+				"State":       state,
+				"Error":       "Invalid or expired code. Generate a new one from the app.",
+			})
+			return
+		}
+
+		// Issue OAuth auth code.
+		authCode := generateWebCode()
 		data, _ := json.Marshal(oauthCodeData{
 			UserID:      userID,
 			RedirectURI: redirectURI,
 			ClientID:    clientID,
 		})
-		if err := h.rdb.Set(r.Context(), oauthCodeKey(code), data, oauthCodeTTL).Err(); err != nil {
+		if err := h.rdb.Set(r.Context(), oauthCodeKey(authCode), data, oauthCodeTTL).Err(); err != nil {
 			slog.Error("[OAUTH] code store failed", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -90,15 +105,14 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(redirectURI, "?") {
 			sep = "&"
 		}
-		target := fmt.Sprintf("%s%scode=%s&state=%s", redirectURI, sep, code, state)
+		target := fmt.Sprintf("%s%scode=%s&state=%s", redirectURI, sep, authCode, state)
 		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
 
-	// GET = show the approval page.
+	// GET = show the code entry page.
 	h.serveOAuthPage(w, map[string]any{
-		"SignedIn":    true,
-		"ClientID":   clientID,
+		"ClientID":    clientID,
 		"RedirectURI": redirectURI,
 		"State":       state,
 	})
@@ -177,23 +191,6 @@ func (h *Handler) OAuthToken(w http.ResponseWriter, r *http.Request) {
 		"access_token": apiKey,
 		"token_type":   "Bearer",
 	})
-}
-
-// getUserFromCookie reads the web_session cookie and returns the
-// user_id if the session is valid. Returns "" if not signed in.
-func (h *Handler) getUserFromCookie(r *http.Request) string {
-	cookie, err := r.Cookie("web_session")
-	if err != nil || cookie.Value == "" {
-		return ""
-	}
-	hash := hashToken(cookie.Value)
-	var userID string
-	err = h.db.QueryRowContext(r.Context(),
-		`SELECT user_id FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID)
-	if err != nil {
-		return ""
-	}
-	return userID
 }
 
 // serveOAuthPage renders the OAuth approval page.

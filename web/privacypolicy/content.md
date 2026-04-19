@@ -1,4 +1,4 @@
-*Last updated: April 18, 2026*
+*Last updated: April 19, 2026*
 
 ## What PingClaw does
 
@@ -6,7 +6,9 @@ PingClaw sends your phone's GPS location to a server so your AI assistant can an
 
 ## Sign-in
 
-PingClaw uses Sign in with Apple and Sign in with Google for authentication. When you sign in, PingClaw receives only a unique, opaque identifier from your provider. PingClaw does not request or store your email address, phone number, contacts, photos, or other account data.
+The iOS and Android apps use Sign in with Apple or Sign in with Google for authentication. When you sign in, PingClaw receives only a unique, opaque identifier from your provider. PingClaw does not request or store your email address, phone number, contacts, photos, or other account data.
+
+The web dashboard does not use social sign-in directly. Instead, you generate a short-lived code on your phone and enter it on the website. This ensures your web session is always linked to the same account as your phone.
 
 ## Location data
 
@@ -48,7 +50,7 @@ You can delete your account at any time from within the app or web dashboard. Th
 - **Webhook** (if configured): the URL and secret you supplied. Stored in PostgreSQL.
 - **Current location**: your most recent location only. Stored in Redis with a 24-hour expiry.
 - **Transient caches**: to reduce database load, PingClaw temporarily caches token lookups (5-minute expiry), webhook configurations (5-minute expiry), and one-time sign-in codes (5-minute expiry) in Redis. These caches contain no data beyond what is already stored in the database and expire automatically.
-- **Rate limit counters**: to prevent abuse, PingClaw stores temporary per-IP request counters in Redis (1-hour expiry). These contain only the IP address and a count, no user data.
+- **Rate limit counters**: to prevent abuse, PingClaw stores temporary per-IP request counters (1-hour expiry) and per-user location request counters (1-minute expiry) in Redis. These contain only an identifier and a count, no location or personal data.
 
 Standard web request metadata (IP address, User-Agent) may be observed by our hosting infrastructure; PingClaw does not durably store it in the application database.
 

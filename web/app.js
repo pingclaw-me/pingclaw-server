@@ -122,8 +122,6 @@ function showSection(id) {
         loadDashboard();
         startLocationPolling();
     } else if (id === 'auth') {
-        // Initialise social sign-in SDK buttons (idempotent).
-        setTimeout(initSocialAuth, 100);
         stopLocationPolling();
     } else {
         stopLocationPolling();
@@ -162,111 +160,11 @@ function updateHeaderBtn() {
     });
 }
 
-// --- Social auth ---
-
-// Called once when the auth section becomes visible. Initialises the
-// Google SDK for the callback. The visible button is our own styled
-// one; clicking it triggers the SDK's rendered button hidden off-screen.
-let googleInitialised = false;
-function initSocialAuth() {
-    if (googleInitialised) return;
-    if (typeof google !== 'undefined' && google.accounts) {
-        const clientId = document.querySelector('meta[name="google-client-id"]')?.content || '';
-        if (clientId) {
-            google.accounts.id.initialize({
-                client_id: clientId,
-                callback: function(response) {
-                    handleSocialToken('google', response.credential);
-                },
-            });
-            // Render the SDK button off-screen so we can programmatically
-            // click it from our styled button.
-            const offscreen = document.getElementById('google-sdk-offscreen');
-            if (offscreen) {
-                google.accounts.id.renderButton(offscreen, {
-                    type: 'standard',
-                    size: 'large',
-                });
-            }
-            googleInitialised = true;
-        }
-    }
-}
-
-// Google Sign in — triggered by our styled button's onclick.
-function googleSignIn() {
-    if (!googleInitialised) initSocialAuth();
-    if (!googleInitialised) {
-        showAuthError('Google Sign-In is loading. Try again in a moment.');
-        return;
-    }
-    // Click the off-screen SDK button to trigger the popup.
-    const sdkBtn = document.querySelector('#google-sdk-offscreen div[role="button"]');
-    if (sdkBtn) {
-        sdkBtn.click();
-    } else {
-        // Fallback to One Tap.
-        google.accounts.id.prompt();
-    }
-}
-
-// Apple Sign in — triggered by our styled button's onclick.
-async function appleSignIn() {
-    if (typeof AppleID === 'undefined') {
-        showAuthError('Apple Sign-In is loading. Try again in a moment.');
-        return;
-    }
-    try {
-        AppleID.auth.init({
-            clientId: 'me.pingclaw.web',
-            scope: '',
-            redirectURI: window.location.origin,
-            usePopup: true,
-        });
-        const data = await AppleID.auth.signIn();
-        if (data.authorization && data.authorization.id_token) {
-            handleSocialToken('apple', data.authorization.id_token);
-        }
-    } catch (err) {
-        if (err.error !== 'popup_closed_by_user') {
-            showAuthError('Apple sign-in failed.');
-        }
-    }
-}
+// --- Auth ---
 
 function showAuthError(msg) {
     const el = document.getElementById('web-code-error');
     if (el) { el.textContent = msg; el.hidden = false; }
-}
-
-// Sends the provider's id_token to the server, gets back a web_session.
-async function handleSocialToken(provider, idToken) {
-    const errorEl = document.getElementById('web-code-error');
-    if (errorEl) errorEl.hidden = true;
-
-    try {
-        const res = await fetch('/pingclaw/auth/social', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, id_token: idToken, client: 'web' }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            if (errorEl) {
-                errorEl.textContent = data.error || 'Sign-in failed';
-                errorEl.hidden = false;
-            }
-            return;
-        }
-        webSession = data.web_session;
-        saveSession();
-        showSection('dashboard');
-    } catch (err) {
-        if (errorEl) {
-            errorEl.textContent = 'Network error. Is the server running?';
-            errorEl.hidden = false;
-        }
-    }
 }
 
 // Signs in via a code generated on the phone (POST /pingclaw/auth/web-login).
@@ -705,7 +603,7 @@ function escapeHtml(s) {
 
 async function rotateAPIKey() {
     if (hasApiKey) {
-        if (!confirm('Rotate your API Key? Your MCP agent config will stop working until you paste in the new key.')) return;
+        if (!confirm('Rotate your API Key? This will disconnect any MCP agent and ChatGPT integration using the current key. You will need to update your MCP config and re-authorize the PingClaw GPT in ChatGPT.')) return;
     }
     try {
         const res = await fetch('/pingclaw/auth/rotate-api-key', {

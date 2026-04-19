@@ -21,7 +21,6 @@
                 </picture>
             </a>
 
-            {{if .SignedIn}}
             <div class="pc-card" style="text-align: left;">
                 <div class="pc-eyebrow" style="margin-bottom: 16px;">Authorize</div>
 
@@ -29,37 +28,27 @@
                     <strong>PingClaw GPT</strong> wants to access your location data.
                 </p>
                 <p class="pc-help" style="margin-bottom: 24px;">
-                    This will allow ChatGPT to read your most recent location
-                    when you ask it location-aware questions. Your location is
-                    never shared with OpenAI beyond what you ask about in the
-                    conversation.
+                    Open the PingClaw app on your phone, go to Settings, and
+                    generate a sign-in code. Enter it below to approve.
                 </p>
 
                 <form method="POST" style="display: flex; flex-direction: column; gap: 12px;">
                     <input type="hidden" name="client_id" value="{{.ClientID}}">
                     <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
                     <input type="hidden" name="state" value="{{.State}}">
+                    <div class="pc-token-row">
+                        <input type="text" name="code" placeholder="Enter code" maxlength="8"
+                               style="text-transform: uppercase; font-family: var(--pc-font-mono); letter-spacing: 0.1em;"
+                               required>
+                    </div>
                     <button type="submit" class="pc-btn-primary pc-btn-block">Approve</button>
                     <a href="/" class="pc-btn-ghost pc-btn-block" style="text-align: center; text-decoration: none;">Deny</a>
                 </form>
-            </div>
-            {{else}}
-            <div class="pc-card" style="text-align: left;">
-                <div class="pc-eyebrow" style="margin-bottom: 16px;">Sign in required</div>
 
-                <p class="pc-body" style="margin-bottom: 16px;">
-                    <strong>PingClaw GPT</strong> wants to connect to your account,
-                    but you're not signed in.
-                </p>
-                <p class="pc-help" style="margin-bottom: 24px;">
-                    Sign in to PingClaw first, then come back to approve.
-                </p>
-
-                <a href="{{.ServerURL}}" class="pc-btn-primary pc-btn-block" style="text-align: center; text-decoration: none;">
-                    Sign in to PingClaw
-                </a>
+                {{if .Error}}
+                <p class="pc-help pc-help-error" style="margin-top: 12px;">{{.Error}}</p>
+                {{end}}
             </div>
-            {{end}}
         </div>
     </main>
 

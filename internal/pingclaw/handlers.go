@@ -40,11 +40,12 @@ type Handler struct {
 	oauth       OAuthConfig
 }
 
-// RateLimitConfig sets the per-window event caps.
+// RateLimitConfig sets the per-window event caps and app config.
 type RateLimitConfig struct {
 	PerIPPerHour          int
-	LocationPostPerMinute int // per-user POST /location cap (default 30)
-	LocationGetPerMinute  int // per-user GET /location cap (default 60)
+	LocationPostPerMinute int    // per-user POST /location cap (default 30)
+	LocationGetPerMinute  int    // per-user GET /location cap (default 60)
+	ChatGPTURL            string // deep link to the PingClaw custom GPT
 }
 
 func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, limiterFast *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
@@ -993,10 +994,30 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
 
+// --- App config ---
+
+// GetConfig returns client-facing configuration that apps fetch at
+// startup. Served from env vars so links can be updated without
+// redeploying the apps.
+//
+//	GET /pingclaw/config   (public)
+func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	config := map[string]any{
+		"integrations": map[string]any{
+			"chatgpt": map[string]any{
+				"name": "ChatGPT",
+				"url":  h.cfg.ChatGPTURL,
+			},
+		},
+	}
+	writeJSON(w, 200, config)
+}
+
 // --- Route registration helper ---
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	// Public auth endpoints
+	// Public endpoints
+	mux.HandleFunc("GET /pingclaw/config", h.GetConfig)
 	mux.HandleFunc("POST /pingclaw/auth/social", h.SocialAuth)
 	mux.HandleFunc("POST /pingclaw/auth/web-login", h.WebLogin)
 
