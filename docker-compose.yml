@@ -30,8 +30,8 @@ services:
       LOG_FILE: logs/server.log
       APPLE_BUNDLE_ID: ${APPLE_BUNDLE_ID:-XTL-74JC6TTWQ8.me.pingclaw.app}
       APPLE_WEB_SERVICE_ID: ${APPLE_WEB_SERVICE_ID:-me.pingclaw.web}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-829482463629-rn53ogdupf2nnjlt8ooi5unqquvn1vuu.apps.googleusercontent.com}
-      GOOGLE_IOS_CLIENT_ID: ${GOOGLE_IOS_CLIENT_ID:-829482463629-bns6vt57man8o94sf11i1b8nk9g70lb5.apps.googleusercontent.com}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-339229829038-mmksusbqmd94mdlavc2ptqajgju9uuf7.apps.googleusercontent.com}
+      GOOGLE_IOS_CLIENT_ID: ${GOOGLE_IOS_CLIENT_ID:-339229829038-hli9moca58el3r2sboog5545njfnqddd.apps.googleusercontent.com}
       RATE_LIMIT_IP_PER_HOUR: ${RATE_LIMIT_IP_PER_HOUR:-10}
       OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-pingclaw-gpt}
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
