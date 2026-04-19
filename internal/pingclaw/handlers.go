@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -532,6 +534,11 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 		go fireUserWebhook(hookURL, secret, userID, payload)
 	}
 
+	// If the user has an OpenClaw gateway destination, deliver concurrently.
+	if dest, err := h.lookupOpenClawDest(r.Context(), userID); err == nil && dest != nil {
+		go deliverToOpenClaw(dest, req.Location.Lat, req.Location.Lng, req.Location.AccuracyMetres, "gps")
+	}
+
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
@@ -864,14 +871,23 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		ProviderSub string `json:"provider_sub"`
 		CreatedAt   string `json:"created_at"`
 	}
+	type openclawDestRow struct {
+		DestinationID string `json:"destination_id"`
+		GatewayURL    string `json:"gateway_url"`
+		HookPath      string `json:"hook_path"`
+		Action        string `json:"action"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
+	}
 	type response struct {
-		UserID     string        `json:"user_id"`
-		CreatedAt  string        `json:"created_at"`
-		UpdatedAt  string        `json:"updated_at"`
-		Identities []identityRow `json:"identities"`
-		Tokens     []tokenRow    `json:"tokens"`
-		Location   *locationRow  `json:"location"`
-		Webhook    *webhookRow   `json:"webhook"`
+		UserID          string           `json:"user_id"`
+		CreatedAt       string           `json:"created_at"`
+		UpdatedAt       string           `json:"updated_at"`
+		Identities      []identityRow    `json:"identities"`
+		Tokens          []tokenRow       `json:"tokens"`
+		Location        *locationRow     `json:"location"`
+		Webhook         *webhookRow      `json:"webhook"`
+		OpenClawGateway *openclawDestRow `json:"openclaw_gateway"`
 	}
 
 	resp := response{UserID: userID, Tokens: []tokenRow{}, Identities: []identityRow{}}
@@ -960,6 +976,21 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// OpenClaw gateway destination (optional)
+	{
+		var oc openclawDestRow
+		var created, updated time.Time
+		err := h.db.QueryRowContext(r.Context(),
+			`SELECT destination_id, gateway_url, hook_path, action, created_at, updated_at
+			   FROM user_openclaw_destinations WHERE user_id = $1`, userID).Scan(
+			&oc.DestinationID, &oc.GatewayURL, &oc.HookPath, &oc.Action, &created, &updated)
+		if err == nil {
+			oc.CreatedAt = created.UTC().Format(time.RFC3339)
+			oc.UpdatedAt = updated.UTC().Format(time.RFC3339)
+			resp.OpenClawGateway = &oc
+		}
+	}
+
 	writeJSON(w, 200, resp)
 }
 
@@ -980,8 +1011,10 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Drop Redis caches. Postgres delete cascades take care of
-	// user_tokens + user_webhooks, but cached data would linger.
+	// user_tokens + user_webhooks + user_openclaw_destinations,
+	// but cached data would linger.
 	h.invalidateWebhookCache(r.Context(), userID)
+	h.invalidateOpenClawDestCache(r.Context(), userID)
 	if err := h.rdb.Del(r.Context(), locationKey(userID)).Err(); err != nil {
 		slog.Warn("delete: redis cache delete failed", "user_id", userID, "error", err)
 	}
@@ -1041,6 +1074,469 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuth(h.PutWebhook))
 	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuth(h.DeleteWebhook))
 	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuth(h.TestWebhook))
+
+	// OpenClaw gateway push delivery
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw", h.requireAuth(h.RegisterOpenClawDest))
+	mux.HandleFunc("GET /pingclaw/webhook/openclaw", h.requireAuth(h.GetOpenClawDest))
+	mux.HandleFunc("DELETE /pingclaw/webhook/openclaw", h.requireAuth(h.DeleteOpenClawDest))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/test", h.requireAuth(h.TestOpenClawDest))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/send", h.requireAuth(h.SendOpenClawLocation))
+}
+
+// --- OpenClaw gateway push delivery ---
+
+// openclawDestCacheTTL caches the per-user list of OpenClaw gateway
+// destinations in Redis so every PostLocation doesn't hit Postgres.
+const openclawDestCacheTTL = 5 * time.Minute
+const openclawDestCacheNone = "__none__"
+
+func openclawDestCacheKey(userID string) string { return "oc:" + userID }
+
+// openclawGatewayDest is the stored configuration for an OpenClaw gateway
+// push destination. One user can have one destination (keyed by user_id).
+type openclawGatewayDest struct {
+	DestinationID string `json:"destination_id"`
+	GatewayURL    string `json:"gateway_url"`
+	HookToken     string `json:"hook_token"`
+	HookPath      string `json:"hook_path"`
+	Action        string `json:"action"`
+	SessionKey    string `json:"session_key,omitempty"`
+}
+
+var hookPathRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+
+// lookupOpenClawDest returns the user's OpenClaw gateway destination, if any.
+func (h *Handler) lookupOpenClawDest(ctx context.Context, userID string) (*openclawGatewayDest, error) {
+	cached, err := h.rdb.Get(ctx, openclawDestCacheKey(userID)).Result()
+	if err == nil {
+		if cached == openclawDestCacheNone {
+			return nil, nil
+		}
+		var dest openclawGatewayDest
+		if json.Unmarshal([]byte(cached), &dest) == nil {
+			return &dest, nil
+		}
+	}
+
+	var dest openclawGatewayDest
+	err = h.db.QueryRowContext(ctx,
+		`SELECT destination_id, gateway_url, hook_token, hook_path, action, session_key
+		   FROM user_openclaw_destinations WHERE user_id = $1`, userID).Scan(
+		&dest.DestinationID, &dest.GatewayURL, &dest.HookToken,
+		&dest.HookPath, &dest.Action, &dest.SessionKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		h.rdb.Set(ctx, openclawDestCacheKey(userID), openclawDestCacheNone, openclawDestCacheTTL)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	body, _ := json.Marshal(dest)
+	h.rdb.Set(ctx, openclawDestCacheKey(userID), string(body), openclawDestCacheTTL)
+	return &dest, nil
+}
+
+func (h *Handler) invalidateOpenClawDestCache(ctx context.Context, userID string) {
+	h.rdb.Del(ctx, openclawDestCacheKey(userID))
+}
+
+// formatLocationText builds the human-readable one-line location string
+// used in OpenClaw gateway hook payloads. Uses signed decimal degrees
+// (the format Google Maps expects).
+func formatLocationText(lat, lon, accuracyMeters float64, source string) string {
+	if source == "" {
+		source = "gps"
+	}
+	return fmt.Sprintf("Location update: %.4f, %.4f ±%dm (%s)",
+		lat, lon,
+		int(math.Round(accuracyMeters)),
+		source)
+}
+
+// openclawDeliveryTimeout and retry delay can be tuned via env vars,
+// but default to sensible values.
+var (
+	openclawDeliveryTimeout    = 10 * time.Second
+	openclawDeliveryRetryDelay = 2 * time.Second
+)
+
+// SetOpenClawDeliveryTimeout overrides the default 10s HTTP timeout for
+// OpenClaw gateway delivery.
+func SetOpenClawDeliveryTimeout(d time.Duration) { openclawDeliveryTimeout = d }
+
+// SetOpenClawDeliveryRetryDelay overrides the default 2s retry delay.
+func SetOpenClawDeliveryRetryDelay(d time.Duration) { openclawDeliveryRetryDelay = d }
+
+// deliverToOpenClaw POSTs a location update to the user's OpenClaw gateway.
+// Runs in a goroutine — failures are logged but never affect the inbound request.
+func deliverToOpenClaw(dest *openclawGatewayDest, lat, lon, accuracyMeters float64, source string) {
+	hookURL := strings.TrimRight(dest.GatewayURL, "/") + "/hooks/" + dest.HookPath
+	text := formatLocationText(lat, lon, accuracyMeters, source)
+
+	var payload []byte
+	if dest.Action == "agent" {
+		payload, _ = json.Marshal(map[string]any{
+			"message": text,
+			"name":    "PingClaw",
+			"deliver": false,
+		})
+	} else {
+		payload, _ = json.Marshal(map[string]any{
+			"text": text,
+			"mode": "now",
+		})
+	}
+
+	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(openclawDeliveryRetryDelay)
+		}
+
+		req, err := http.NewRequest("POST", hookURL, bytes.NewReader(payload))
+		if err != nil {
+			slog.Error("[PINGCLAW OPENCLAW] request build failed", "url", hookURL, "error", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+dest.HookToken)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			slog.Warn("[PINGCLAW OPENCLAW] POST failed", "url", hookURL, "attempt", attempt+1, "error", err)
+			continue
+		}
+		resp.Body.Close()
+
+		// Don't retry on auth failure or not found.
+		if resp.StatusCode == 401 || resp.StatusCode == 404 {
+			slog.Warn("[PINGCLAW OPENCLAW] delivery rejected", "url", hookURL, "status", resp.StatusCode)
+			return
+		}
+
+		if resp.StatusCode < 300 {
+			slog.Info("[PINGCLAW OPENCLAW] delivered", "url", hookURL, "status", resp.StatusCode)
+			return
+		}
+
+		lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+		slog.Warn("[PINGCLAW OPENCLAW] delivery error", "url", hookURL, "status", resp.StatusCode, "attempt", attempt+1)
+	}
+	if lastErr != nil {
+		slog.Warn("[PINGCLAW OPENCLAW] delivery failed after retries", "url", hookURL, "error", lastErr)
+	}
+}
+
+// testOpenClawDelivery sends a verification POST to the gateway and returns
+// the HTTP status code. Used during registration and by the test endpoint.
+func testOpenClawDelivery(gatewayURL, hookToken, hookPath string) (int, error) {
+	hookURL := strings.TrimRight(gatewayURL, "/") + "/hooks/" + hookPath
+	payload, _ := json.Marshal(map[string]any{
+		"text": "PingClaw connected. Location updates will appear here.",
+		"mode": "now",
+	})
+
+	req, err := http.NewRequest("POST", hookURL, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+hookToken)
+
+	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// RegisterOpenClawDest registers (or replaces) an OpenClaw gateway
+// destination for the authenticated user. Verifies the gateway is
+// reachable before saving.
+//
+//	POST /pingclaw/webhook/openclaw
+func (h *Handler) RegisterOpenClawDest(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+
+	var req struct {
+		GatewayURL string `json:"gateway_url"`
+		HookToken  string `json:"hook_token"`
+		HookPath   string `json:"hook_path"`
+		Action     string `json:"action"`
+		SessionKey string `json:"session_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+
+	gatewayURL := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(req.GatewayURL), "/"))
+	hookToken := strings.TrimSpace(req.HookToken)
+	hookPath := strings.TrimSpace(req.HookPath)
+	action := strings.TrimSpace(req.Action)
+	sessionKey := strings.TrimSpace(req.SessionKey)
+
+	if gatewayURL == "" {
+		writeError(w, 400, "gateway_url is required")
+		return
+	}
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		writeError(w, 400, "gateway_url must be a valid http(s) URL")
+		return
+	}
+	if hookToken == "" {
+		writeError(w, 400, "hook_token is required")
+		return
+	}
+	if hookPath == "" {
+		hookPath = "pingclaw"
+	}
+	if !hookPathRe.MatchString(hookPath) {
+		writeError(w, 400, "hook_path must be alphanumeric with hyphens only, no slashes")
+		return
+	}
+	if action == "" {
+		action = "wake"
+	}
+	if action != "wake" && action != "agent" {
+		writeError(w, 400, "action must be 'wake' or 'agent'")
+		return
+	}
+
+	// Verify the gateway is reachable and the token is valid.
+	status, err := testOpenClawDelivery(gatewayURL, hookToken, hookPath)
+	if err != nil {
+		slog.Warn("[PINGCLAW OPENCLAW] verification failed", "user_id", userID, "url", gatewayURL, "error", err)
+		writeJSON(w, 422, map[string]string{
+			"error":   "gateway_unreachable",
+			"message": "Could not reach the OpenClaw gateway. Check the URL and ensure hooks are enabled.",
+		})
+		return
+	}
+	if status == 401 {
+		writeJSON(w, 422, map[string]string{
+			"error":   "gateway_auth_failed",
+			"message": "The gateway rejected the hook token. Check hooks.token in your openclaw.json.",
+		})
+		return
+	}
+	if status >= 300 {
+		slog.Warn("[PINGCLAW OPENCLAW] verification returned error", "user_id", userID, "status", status)
+		writeJSON(w, 422, map[string]string{
+			"error":   "gateway_unreachable",
+			"message": fmt.Sprintf("The gateway returned HTTP %d. Check your gateway configuration.", status),
+		})
+		return
+	}
+
+	destID := "dest_" + uuid.New().String()[:12]
+
+	if _, err = h.db.ExecContext(r.Context(),
+		`INSERT INTO user_openclaw_destinations (destination_id, user_id, gateway_url, hook_token, hook_path, action, session_key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (user_id) DO UPDATE SET
+		   destination_id = EXCLUDED.destination_id,
+		   gateway_url = EXCLUDED.gateway_url,
+		   hook_token = EXCLUDED.hook_token,
+		   hook_path = EXCLUDED.hook_path,
+		   action = EXCLUDED.action,
+		   session_key = EXCLUDED.session_key,
+		   updated_at = now()`,
+		destID, userID, gatewayURL, hookToken, hookPath, action, sessionKey); err != nil {
+		slog.Error("[PINGCLAW OPENCLAW] upsert failed", "user_id", userID, "error", err)
+		writeError(w, 500, "failed to save destination")
+		return
+	}
+	h.invalidateOpenClawDestCache(r.Context(), userID)
+
+	slog.Info("[PINGCLAW OPENCLAW] registered", "user_id", userID, "url", gatewayURL, "path", hookPath, "action", action)
+	writeJSON(w, 201, map[string]any{
+		"destination_id": destID,
+		"type":           "openclaw_gateway",
+		"gateway_url":    gatewayURL,
+		"hook_path":      hookPath,
+		"action":         action,
+		"verified":       true,
+	})
+}
+
+// GetOpenClawDest returns the user's configured OpenClaw gateway destination.
+//
+//	GET /pingclaw/webhook/openclaw
+func (h *Handler) GetOpenClawDest(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+	dest, err := h.lookupOpenClawDest(r.Context(), userID)
+	if err != nil {
+		slog.Error("[PINGCLAW OPENCLAW] lookup failed", "user_id", userID, "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
+	if dest == nil {
+		writeJSON(w, 200, map[string]any{"destination": nil})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"destination": map[string]any{
+			"destination_id": dest.DestinationID,
+			"type":           "openclaw_gateway",
+			"gateway_url":    dest.GatewayURL,
+			"hook_path":      dest.HookPath,
+			"action":         dest.Action,
+			"session_key":    dest.SessionKey,
+		},
+	})
+}
+
+// DeleteOpenClawDest removes the user's OpenClaw gateway destination.
+//
+//	DELETE /pingclaw/webhook/openclaw
+func (h *Handler) DeleteOpenClawDest(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+	if _, err := h.db.ExecContext(r.Context(),
+		`DELETE FROM user_openclaw_destinations WHERE user_id = $1`, userID); err != nil {
+		writeError(w, 500, "failed to delete destination")
+		return
+	}
+	h.invalidateOpenClawDestCache(r.Context(), userID)
+	slog.Info("[PINGCLAW OPENCLAW] removed", "user_id", userID)
+	writeJSON(w, 200, map[string]string{"status": "deleted"})
+}
+
+// TestOpenClawDest sends a test POST to the user's OpenClaw gateway destination.
+//
+//	POST /pingclaw/webhook/openclaw/test
+func (h *Handler) TestOpenClawDest(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+	dest, err := h.lookupOpenClawDest(r.Context(), userID)
+	if err != nil {
+		slog.Error("[PINGCLAW OPENCLAW] lookup failed", "user_id", userID, "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
+	if dest == nil {
+		writeError(w, 404, "no OpenClaw gateway destination configured")
+		return
+	}
+
+	status, err := testOpenClawDelivery(dest.GatewayURL, dest.HookToken, dest.HookPath)
+	if err != nil {
+		slog.Warn("[PINGCLAW OPENCLAW] test delivery failed", "user_id", userID, "error", err)
+		writeJSON(w, 200, map[string]any{
+			"verified":       false,
+			"destination_id": dest.DestinationID,
+			"error":          "gateway_unreachable",
+			"message":        "Could not reach the OpenClaw gateway.",
+		})
+		return
+	}
+	if status == 401 {
+		writeJSON(w, 200, map[string]any{
+			"verified":       false,
+			"destination_id": dest.DestinationID,
+			"error":          "gateway_auth_failed",
+			"message":        "The gateway rejected the hook token.",
+		})
+		return
+	}
+
+	verified := status < 300
+	slog.Info("[PINGCLAW OPENCLAW] test delivered", "user_id", userID, "status", status, "verified", verified)
+	writeJSON(w, 200, map[string]any{
+		"verified":       verified,
+		"destination_id": dest.DestinationID,
+		"type":           "openclaw_gateway",
+		"gateway_url":    dest.GatewayURL,
+		"hook_path":      dest.HookPath,
+		"action":         dest.Action,
+	})
+}
+
+// SendOpenClawLocation reads the user's last known location from Redis
+// and delivers it to the configured OpenClaw gateway synchronously,
+// returning the result to the caller.
+//
+//	POST /pingclaw/webhook/openclaw/send
+func (h *Handler) SendOpenClawLocation(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+	dest, err := h.lookupOpenClawDest(r.Context(), userID)
+	if err != nil {
+		slog.Error("[PINGCLAW OPENCLAW] lookup failed", "user_id", userID, "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
+	if dest == nil {
+		writeError(w, 404, "no OpenClaw gateway destination configured")
+		return
+	}
+
+	loc, err := h.readLocation(r.Context(), userID)
+	if err != nil {
+		slog.Error("[PINGCLAW OPENCLAW] location read failed", "user_id", userID, "error", err)
+		writeError(w, 500, "internal error")
+		return
+	}
+	if loc == nil {
+		writeError(w, 404, "no location data — open PingClaw on your phone first")
+		return
+	}
+
+	acc := 0.0
+	if loc.AccuracyMetres != nil {
+		acc = *loc.AccuracyMetres
+	}
+
+	hookURL := strings.TrimRight(dest.GatewayURL, "/") + "/hooks/" + dest.HookPath
+	text := formatLocationText(loc.Lat, loc.Lng, acc, "gps")
+
+	var payload []byte
+	if dest.Action == "agent" {
+		payload, _ = json.Marshal(map[string]any{
+			"message": text,
+			"name":    "PingClaw",
+			"deliver": false,
+		})
+	} else {
+		payload, _ = json.Marshal(map[string]any{
+			"text": text,
+			"mode": "now",
+		})
+	}
+
+	req2, err := http.NewRequest("POST", hookURL, bytes.NewReader(payload))
+	if err != nil {
+		writeError(w, 500, "failed to build request")
+		return
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+dest.HookToken)
+
+	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	resp, err := client.Do(req2)
+	if err != nil {
+		slog.Warn("[PINGCLAW OPENCLAW] send location failed", "user_id", userID, "error", err)
+		writeJSON(w, 200, map[string]any{
+			"delivered": false,
+			"error":     "gateway_unreachable",
+			"message":   "Could not reach the OpenClaw gateway.",
+		})
+		return
+	}
+	resp.Body.Close()
+
+	delivered := resp.StatusCode < 300
+	slog.Info("[PINGCLAW OPENCLAW] location sent", "user_id", userID, "status", resp.StatusCode, "delivered", delivered)
+	writeJSON(w, 200, map[string]any{
+		"delivered": delivered,
+		"status":    resp.StatusCode,
+		"location":  map[string]any{"lat": loc.Lat, "lng": loc.Lng},
+		"text":      text,
+	})
 }
 
 // isPrivateHost returns true if the hostname resolves to a private,

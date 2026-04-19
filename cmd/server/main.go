@@ -96,6 +96,14 @@ func main() {
 		slog.Info("oauth enabled", "client_id", oauthConfig.ClientID)
 	}
 
+	// OpenClaw delivery tuning (optional env vars).
+	if v := envInt("OPENCLAW_DELIVERY_TIMEOUT_SECONDS", 0); v > 0 {
+		pingclaw.SetOpenClawDeliveryTimeout(time.Duration(v) * time.Second)
+	}
+	if v := envInt("OPENCLAW_DELIVERY_RETRY_DELAY_SECONDS", 0); v > 0 {
+		pingclaw.SetOpenClawDeliveryRetryDelay(time.Duration(v) * time.Second)
+	}
+
 	mux := http.NewServeMux()
 
 	// PingClaw web dashboard + iOS app endpoints (under /pingclaw/)
@@ -130,6 +138,7 @@ func main() {
 	mux.Handle("/setup/ios.html", mdpage.NewFragmentHandler("web/setup/ios.md"))
 	mux.Handle("/setup/chatgpt.html", mdpage.NewFragmentHandler("web/setup/chatgpt.md"))
 	mux.Handle("/setup/mcp.html", mdpage.NewFragmentHandler("web/setup/mcp.md"))
+	mux.Handle("/setup/openclaw.html", mdpage.NewFragmentHandler("web/setup/openclaw.md"))
 
 	// Static website (landing page, dashboard, css, js, icons).
 	mux.Handle("/", http.FileServer(http.Dir("web")))
@@ -253,6 +262,23 @@ func applySchema(db *sql.DB) error {
 		secret     TEXT NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`); err != nil {
+		return err
+	}
+
+	// user_openclaw_destinations — per-user OpenClaw gateway push destination.
+	// One destination per user. The hook_token is stored plaintext because the
+	// server replays it as Authorization: Bearer on every push.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_openclaw_destinations (
+		destination_id TEXT NOT NULL,
+		user_id        TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+		gateway_url    TEXT NOT NULL,
+		hook_token     TEXT NOT NULL,
+		hook_path      TEXT NOT NULL DEFAULT 'pingclaw',
+		action         TEXT NOT NULL DEFAULT 'wake' CHECK(action IN ('wake','agent')),
+		session_key    TEXT NOT NULL DEFAULT '',
+		created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`); err != nil {
 		return err
 	}

@@ -165,6 +165,78 @@
                     <button id="mcp-config-copy" class="pc-btn-ghost pc-btn-sm" onclick="copyConfig()">Copy config</button>
                 </div>
 
+                <!-- OpenClaw Gateway -->
+                <div class="pc-eyebrow pc-dash-section">OpenClaw gateway</div>
+
+                <!-- OpenClaw: setup form (hidden when a destination is active) -->
+                <div id="openclaw-setup" class="pc-card">
+                    <div id="setup-openclaw-content" class="pc-prose" style="margin-bottom: 16px;"></div>
+
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <div>
+                            <label class="pc-label" for="openclaw-url-input">Gateway URL</label>
+                            <input type="text" id="openclaw-url-input" placeholder="https://my-gateway.tailnet.ts.net:18789">
+                            <p class="pc-help" style="margin-top: 4px;">The URL of your OpenClaw gateway. Must be reachable from the internet — use Tailscale Funnel or a public deployment.</p>
+                        </div>
+                        <div>
+                            <label class="pc-label" for="openclaw-token-input">Hook token</label>
+                            <input type="text" id="openclaw-token-input" placeholder="your hooks.token value">
+                            <p class="pc-help" style="margin-top: 4px;">The <code>hooks.token</code> value from your <code>openclaw.json</code>.</p>
+                        </div>
+                        <div>
+                            <label class="pc-label" for="openclaw-path-input">Hook path</label>
+                            <input type="text" id="openclaw-path-input" placeholder="pingclaw" value="pingclaw">
+                            <p class="pc-help" style="margin-top: 4px;">Updates are sent to <code>/hooks/{path}</code> on your gateway.</p>
+                        </div>
+                        <div>
+                            <label class="pc-label" for="openclaw-action-select">Action</label>
+                            <select id="openclaw-action-select" class="pc-input" style="width: auto;">
+                                <option value="wake" selected>Wake (recommended)</option>
+                                <option value="agent">Agent (uses tokens)</option>
+                            </select>
+                            <p class="pc-help" style="margin-top: 4px;">Wake injects location as context silently. Agent triggers a full agent run on every update.</p>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button class="pc-btn-primary pc-btn-sm" onclick="registerOpenClaw()">Connect</button>
+                            <span id="openclaw-register-status" class="pc-help" style="display: none;"></span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--pc-border);">
+                        <p class="pc-help" style="margin-bottom: 8px;">Add to your <code>~/.openclaw/openclaw.json</code>:</p>
+                        <pre id="openclaw-config-snippet" class="pc-code-block"></pre>
+                        <button class="pc-btn-ghost pc-btn-sm" onclick="copyOpenClawConfig()">Copy config</button>
+                    </div>
+                </div>
+
+                <!-- OpenClaw: active config (hidden when no destination is registered) -->
+                <div id="openclaw-configured" class="pc-card" style="display: none;">
+                    <div style="margin-bottom: 16px;">
+                        <label class="pc-label">Gateway URL</label>
+                        <div class="pc-token-row">
+                            <input type="text" id="openclaw-url-display" readonly>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label class="pc-label">Hook path</label>
+                        <div class="pc-token-row">
+                            <input type="text" id="openclaw-path-display" readonly>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label class="pc-label">Action</label>
+                        <div class="pc-token-row">
+                            <input type="text" id="openclaw-action-display" readonly>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <button class="pc-btn-primary pc-btn-sm" onclick="sendOpenClawLocation()">Send location now</button>
+                        <button class="pc-btn-ghost pc-btn-sm" onclick="testOpenClaw()">Test connection</button>
+                        <button class="pc-btn-danger pc-btn-sm" onclick="deleteOpenClaw()">Remove</button>
+                    </div>
+                    <div id="openclaw-test-status" class="pc-help" style="margin-bottom: 8px; display: none;"></div>
+                </div>
+
                 <!-- Webhook -->
                 <div class="pc-eyebrow pc-dash-section">Webhook</div>
 

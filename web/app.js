@@ -270,6 +270,8 @@ async function loadDashboard() {
     renderApiKey();
     renderMcpConfig();
     renderWebhook();
+    loadSetupSubContent('openclaw');
+    loadOpenClawDest();
     fetchLocation();
 }
 
@@ -720,3 +722,181 @@ document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     if (e.target.id === 'web-code-input') webLogin();
 });
+
+// Update the OpenClaw config snippet live as the user types a hook token.
+document.addEventListener('input', (e) => {
+    if (e.target.id === 'openclaw-token-input') updateOpenClawConfigSnippet();
+});
+
+// --- OpenClaw gateway push delivery ---
+
+let openclawDest = null; // { destination_id, gateway_url, hook_path, action }
+
+async function loadOpenClawDest() {
+    try {
+        const res = await fetch('/pingclaw/webhook/openclaw', {
+            headers: { Authorization: 'Bearer ' + webSession },
+        });
+        if (res.ok) {
+            const data = await res.json();
+            openclawDest = data.destination || null;
+        }
+    } catch (err) { /* leave null */ }
+    renderOpenClaw();
+}
+
+function renderOpenClaw() {
+    const setup = document.getElementById('openclaw-setup');
+    const configured = document.getElementById('openclaw-configured');
+    if (!setup || !configured) return;
+
+    if (openclawDest) {
+        document.getElementById('openclaw-url-display').value = openclawDest.gateway_url || '';
+        document.getElementById('openclaw-path-display').value = '/hooks/' + (openclawDest.hook_path || 'pingclaw');
+        document.getElementById('openclaw-action-display').value = openclawDest.action === 'agent' ? 'Agent' : 'Wake';
+        configured.style.display = '';
+        setup.style.display = 'none';
+    } else {
+        configured.style.display = 'none';
+        setup.style.display = '';
+    }
+    updateOpenClawConfigSnippet();
+}
+
+function updateOpenClawConfigSnippet() {
+    const el = document.getElementById('openclaw-config-snippet');
+    if (!el) return;
+    const tokenInput = document.getElementById('openclaw-token-input');
+    const token = tokenInput ? (tokenInput.value.trim() || 'your-hook-token') : 'your-hook-token';
+    el.textContent = JSON.stringify({
+        hooks: {
+            enabled: true,
+            token: token,
+            path: "/hooks"
+        }
+    }, null, 2);
+}
+
+function copyOpenClawConfig() {
+    const el = document.getElementById('openclaw-config-snippet');
+    if (!el) return;
+    copyToClipboard(el.textContent, event.target);
+}
+
+async function registerOpenClaw() {
+    const urlInput = document.getElementById('openclaw-url-input');
+    const tokenInput = document.getElementById('openclaw-token-input');
+    const pathInput = document.getElementById('openclaw-path-input');
+    const actionSelect = document.getElementById('openclaw-action-select');
+    const status = document.getElementById('openclaw-register-status');
+
+    const gatewayURL = (urlInput?.value || '').trim();
+    const hookToken = (tokenInput?.value || '').trim();
+    const hookPath = (pathInput?.value || 'pingclaw').trim();
+    const action = actionSelect?.value || 'wake';
+
+    if (!gatewayURL) {
+        if (status) { status.textContent = 'Gateway URL is required.'; status.style.color = 'var(--pc-error)'; status.style.display = ''; }
+        return;
+    }
+    if (!hookToken) {
+        if (status) { status.textContent = 'Hook token is required.'; status.style.color = 'var(--pc-error)'; status.style.display = ''; }
+        return;
+    }
+
+    if (status) { status.textContent = 'Connecting…'; status.style.color = 'var(--pc-text-3)'; status.style.display = ''; }
+
+    try {
+        const res = await fetch('/pingclaw/webhook/openclaw', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + webSession,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                gateway_url: gatewayURL,
+                hook_token: hookToken,
+                hook_path: hookPath,
+                action: action,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok || res.status === 201) {
+            openclawDest = {
+                destination_id: data.destination_id,
+                gateway_url: data.gateway_url,
+                hook_path: data.hook_path,
+                action: data.action,
+            };
+            renderOpenClaw();
+            if (status) { status.style.display = 'none'; }
+        } else {
+            if (status) {
+                status.textContent = data.message || data.error || 'Registration failed';
+                status.style.color = 'var(--pc-error)';
+                status.style.display = '';
+            }
+        }
+    } catch (err) {
+        if (status) { status.textContent = 'Network error'; status.style.color = 'var(--pc-error)'; status.style.display = ''; }
+    }
+}
+
+async function testOpenClaw() {
+    const status = document.getElementById('openclaw-test-status');
+    if (status) { status.textContent = 'Sending…'; status.style.color = 'var(--pc-text-3)'; status.style.display = ''; }
+    try {
+        const res = await fetch('/pingclaw/webhook/openclaw/test', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + webSession },
+        });
+        const data = await res.json();
+        if (!status) return;
+        if (data.verified) {
+            status.style.color = 'var(--pc-accent)';
+            status.textContent = 'Delivered — gateway is reachable.';
+        } else {
+            status.style.color = 'var(--pc-error)';
+            status.textContent = data.message || 'Test failed';
+        }
+    } catch (err) {
+        if (status) { status.style.color = 'var(--pc-error)'; status.textContent = 'Network error'; }
+    }
+}
+
+async function sendOpenClawLocation() {
+    const status = document.getElementById('openclaw-test-status');
+    if (status) { status.textContent = 'Sending location…'; status.style.color = 'var(--pc-text-3)'; status.style.display = ''; }
+    try {
+        const res = await fetch('/pingclaw/webhook/openclaw/send', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + webSession },
+        });
+        const data = await res.json();
+        if (!status) return;
+        if (data.delivered) {
+            status.style.color = 'var(--pc-accent)';
+            status.textContent = 'Delivered — ' + data.text;
+        } else {
+            status.style.color = 'var(--pc-error)';
+            status.textContent = data.message || data.error || 'Delivery failed';
+        }
+    } catch (err) {
+        if (status) { status.style.color = 'var(--pc-error)'; status.textContent = 'Network error'; }
+    }
+}
+
+async function deleteOpenClaw() {
+    if (!confirm('Remove the OpenClaw gateway? Location updates will stop being pushed to your gateway.')) return;
+    try {
+        const res = await fetch('/pingclaw/webhook/openclaw', {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer ' + webSession },
+        });
+        if (!res.ok) { alert('Failed to remove destination'); return; }
+        openclawDest = null;
+        renderOpenClaw();
+    } catch (err) {
+        alert('Network error');
+    }
+}
