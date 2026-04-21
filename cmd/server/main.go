@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver
@@ -69,10 +70,14 @@ func main() {
 	// Social auth (Apple + Google). Tokens can arrive from iOS or web,
 	// each with a different audience (client ID), so we accept both.
 	appleBundleID := envOrDefault("APPLE_BUNDLE_ID", "me.pingclaw.app")
+	appleAudiences := strings.Split(appleBundleID, ",")
+	for i := range appleAudiences {
+		appleAudiences[i] = strings.TrimSpace(appleAudiences[i])
+	}
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleIOSClientID := os.Getenv("GOOGLE_IOS_CLIENT_ID")
 	verifier := socialauth.New(
-		[]string{appleBundleID},
+		appleAudiences,
 		[]string{googleClientID, googleIOSClientID},
 	)
 	slog.Info("social auth initialised",
