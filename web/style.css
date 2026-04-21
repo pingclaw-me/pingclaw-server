@@ -666,8 +666,14 @@ label.pc-label {
 
 @media (max-width: 720px) {
   .pc-grid-3 { grid-template-columns: 1fr; }
+  .pc-container:has(.pc-inuse-phone) {
+    flex-direction: column !important;
+  }
   .pc-inuse-phone {
-    display: none;
+    text-align: center;
+  }
+  .pc-inuse-phone img {
+    width: 200px !important;
   }
 }
 
