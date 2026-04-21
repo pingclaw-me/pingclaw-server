@@ -666,7 +666,7 @@ label.pc-label {
 
 @media (max-width: 720px) {
   .pc-grid-3 { grid-template-columns: 1fr; }
-  .pc-container:has(.pc-inuse-phone) {
+  .pc-inuse-row {
     flex-direction: column !important;
   }
   .pc-inuse-phone {
