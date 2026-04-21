@@ -230,7 +230,9 @@ func promptUser(title string, lines ...string) {
 	for _, l := range lines {
 		logf("│  %s\n", l)
 	}
-	logf("└─ Press Enter to continue... ")
+	logf("│\n")
+	logf("│  Do this NOW, then press Enter.\n")
+	logf("└─ ")
 	fmt.Scanln()
 	if log != nil {
 		log.WriteString("[user pressed Enter]\n")

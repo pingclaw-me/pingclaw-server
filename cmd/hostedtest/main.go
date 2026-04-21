@@ -127,7 +127,6 @@ func main() {
 	}
 
 	skip := func(name string, reason string) {
-		total++
 		logf("\n── %s ──\n", name)
 		logf("   SKIP: %s\n", reason)
 		skipped++
@@ -182,31 +181,11 @@ func main() {
 	)
 	run("Verify location timestamp is recent", verifyLocationRecent)
 
-	// === Phase 6: Google Sign-In (second identity) ===
-	promptUser("SIGN IN WITH GOOGLE (optional)",
-		"If you want to test Google Sign-In:",
-		"1. Sign out in the app (Settings → Sign Out)",
-		"2. Sign in with Google",
-		"3. Generate a new sign-in code",
-		"",
-		"Or press Enter to skip",
-	)
-	googleCode := promptInput("Sign-in code (or empty to skip)")
-	if googleCode != "" {
-		run("Exchange Google web code", func() error {
-			return exchangeWebCode(googleCode)
-		})
-		run("Verify Google session works", verifyWebSessionWorks)
-		if dbURL != "" {
-			run("Verify Google identity in database", verifyGoogleIdentityInDB)
-		}
-	} else {
-		skip("Google Sign-In", "skipped by user")
-	}
-
-	// === Phase 7: Webhooks (requires tunnel) ===
+	// === Phase 6: Webhooks (requires tunnel) ===
+	// Run these while still on the Apple user — the phone is sending
+	// location as this user, so webhook delivery will work.
 	if tunnelURL != "" {
-		run("Start webhook receiver", startWebhookReceiver)
+		run("Start webhook + OpenClaw receiver", startCombinedReceiver)
 		run("Register webhook", registerWebhook)
 
 		if dbURL != "" {
@@ -215,17 +194,31 @@ func main() {
 		run("Test webhook endpoint", testWebhookEndpoint)
 		run("Verify test webhook received", verifyWebhookReceived)
 
-		promptUser("SEND LOCATION FOR WEBHOOK",
-			"1. In the app, tap 'Share Current Location Now'",
-		)
-		run("Verify webhook received location update", verifyWebhookReceivedLocation)
-
-		// OpenClaw hook
-		run("Start OpenClaw hook receiver", startOpenClawReceiver)
+		// OpenClaw hook — uses the same tunnel, different path
 		run("Register OpenClaw gateway", registerOpenClawDest)
 		run("Test OpenClaw endpoint", testOpenClawEndpoint)
 		run("Send location to OpenClaw", sendOpenClawLocation)
 		run("Verify OpenClaw received payload", verifyOpenClawReceived)
+
+		// Capture current counts BEFORE the prompt — payloads may
+		// arrive while the user is reading the instructions.
+		webhookMu.Lock()
+		webhookCountBefore := len(webhookPayloads)
+		webhookMu.Unlock()
+		openclawMu.Lock()
+		openclawCountBefore := len(openclawPayloads)
+		openclawMu.Unlock()
+
+		promptUser("SEND LOCATION FOR WEBHOOK + OPENCLAW",
+			"1. In the app, tap 'Share Current Location Now'",
+			"   (both webhook and OpenClaw should receive it)",
+		)
+		run("Verify webhook received location update", func() error {
+			return verifyNewPayload(&webhookMu, &webhookPayloads, webhookCountBefore, "webhook")
+		})
+		run("Verify OpenClaw received location update", func() error {
+			return verifyNewPayload(&openclawMu, &openclawPayloads, openclawCountBefore, "openclaw")
+		})
 
 		// Cleanup
 		run("Delete webhook", deleteWebhook)
@@ -235,9 +228,45 @@ func main() {
 		skip("OpenClaw tests", "PINGCLAW_TUNNEL_URL not set")
 	}
 
-	// === Phase 8: Token rotation ===
+	// === Phase 7: Token rotation ===
 	run("Rotate API key (old key rejected)", verifyAPIKeyRotation)
 	run("Rotate pairing token (old token rejected)", verifyPairingTokenRotation)
+
+	// === Phase 8: Google Sign-In (optional, creates second user) ===
+	promptUser("SIGN IN WITH GOOGLE (optional)",
+		"This tests Google Sign-In by creating a SEPARATE account.",
+		"",
+		"If you want to test it:",
+		"1. Sign out in the app (Settings → Sign Out)",
+		"2. Sign in with Google",
+		"3. Generate a new sign-in code",
+		"4. Enter the code below",
+		"",
+		"Or just press Enter to skip.",
+	)
+	googleCode := promptInput("Sign-in code (or empty to skip)")
+	if googleCode != "" {
+		// Save Apple session — we'll need it later for account deletion
+		appleSession := webSession
+
+		run("Exchange Google web code", func() error {
+			return exchangeWebCode(googleCode)
+		})
+		run("Verify Google session works", verifyWebSessionWorks)
+		if dbURL != "" {
+			run("Verify Google identity in database", verifyGoogleIdentityInDB)
+		}
+
+		// Clean up the Google account
+		run("Delete Google test account", deleteAccount)
+		run("Verify Google token rejected", verifyTokenRejected)
+
+		// Restore Apple session for remaining tests
+		webSession = appleSession
+		logf("\n   Restored Apple session for remaining tests\n")
+	} else {
+		skip("Google Sign-In", "skipped by user")
+	}
 
 	// === Phase 9: Disable location ===
 	promptUser("DISABLE LOCATION SHARING",
@@ -247,7 +276,7 @@ func main() {
 
 	// === Phase 10: Account deletion ===
 	promptUser("CONFIRM ACCOUNT DELETION",
-		"The next step will DELETE your test account.",
+		"The next step will DELETE your Apple test account.",
 		"All data, tokens, and identities will be permanently removed.",
 		"",
 		"Press Enter to proceed with deletion.",
@@ -262,10 +291,10 @@ func main() {
 	logf("\n══════════════════════════════\n")
 	logf("  Results: %d/%d passed", passed, total)
 	if failed > 0 {
-		logf(", %d FAILED", failed)
+		logf(", %d failed", failed)
 	}
 	if skipped > 0 {
-		logf(", %d skipped", skipped)
+		logf(" (%d skipped)", skipped)
 	}
 	logf("\n══════════════════════════════\n\n")
 
@@ -306,12 +335,15 @@ func promptUser(title string, lines ...string) {
 	for _, l := range lines {
 		logf("│  %s\n", l)
 	}
-	logf("└─ Press Enter to continue... ")
+	logf("│\n")
+	logf("│  Do this NOW, then press Enter.\n")
+	logf("└─ ")
 	fmt.Scanln()
 	if log != nil {
 		log.WriteString("[user pressed Enter]\n")
 	}
 }
+
 
 func promptInput(label string) string {
 	fmt.Printf("   %s: ", label)
@@ -879,8 +911,13 @@ func verifyLocationRecent() error {
 
 // --- Phase 7: Webhooks ---
 
-func startWebhookReceiver() error {
+// startCombinedReceiver starts a single HTTP server that handles both
+// webhook deliveries (POST /location) and OpenClaw hooks (POST /hooks/pingclaw)
+// on the same port, so only one ngrok tunnel is needed.
+func startCombinedReceiver() error {
 	mux := http.NewServeMux()
+
+	// Webhook receiver
 	mux.HandleFunc("POST /location", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
@@ -900,12 +937,34 @@ func startWebhookReceiver() error {
 		w.WriteHeader(200)
 	})
 
+	// OpenClaw hook receiver
+	mux.HandleFunc("POST /hooks/pingclaw", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+
+		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(auth), []byte("test-openclaw-token")) != 1 {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+
+		var payload map[string]any
+		json.Unmarshal(body, &payload)
+		openclawMu.Lock()
+		openclawPayloads = append(openclawPayloads, payload)
+		openclawMu.Unlock()
+		logf("   [openclaw] received: text=%v\n", payload["text"])
+		w.WriteHeader(200)
+	})
+
 	listener, err := net.Listen("tcp", ":"+webhookPort)
 	if err != nil {
 		return err
 	}
 	go http.Serve(listener, mux)
-	logf("   Webhook receiver on :%s (public: %s)\n", webhookPort, tunnelURL)
+	logf("   Combined receiver on :%s (public: %s)\n", webhookPort, tunnelURL)
+	logf("   Webhook:  %s/location\n", tunnelURL)
+	logf("   OpenClaw: %s/hooks/pingclaw\n", tunnelURL)
 	return nil
 }
 
@@ -972,69 +1031,28 @@ func verifyWebhookReceived() error {
 	return fmt.Errorf("no webhook payloads received after 10s")
 }
 
-func verifyWebhookReceivedLocation() error {
-	startCount := func() int {
-		webhookMu.Lock()
-		defer webhookMu.Unlock()
-		return len(webhookPayloads)
-	}()
-
+// verifyNewPayload waits for a new payload to arrive beyond startCount.
+func verifyNewPayload(mu *sync.Mutex, payloads *[]map[string]any, startCount int, label string) error {
 	for i := 0; i < 10; i++ {
-		webhookMu.Lock()
-		count := len(webhookPayloads)
-		webhookMu.Unlock()
+		mu.Lock()
+		count := len(*payloads)
+		mu.Unlock()
 		if count > startCount {
-			webhookMu.Lock()
-			last := webhookPayloads[count-1]
-			webhookMu.Unlock()
-			logf("   Location update received via webhook: event=%v\n", last["event"])
+			mu.Lock()
+			last := (*payloads)[count-1]
+			mu.Unlock()
+			logf("   %s received new payload (#%d)\n", label, count)
+			_ = last
 			return nil
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("no new webhook payload after 10s — did you tap Share Now?")
+	return fmt.Errorf("no new %s payload after 10s — did you tap Share Now?", label)
 }
 
 // --- OpenClaw ---
 
-func startOpenClawReceiver() error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /hooks/pingclaw", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		r.Body.Close()
-
-		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(auth), []byte("test-openclaw-token")) != 1 {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-
-		var payload map[string]any
-		json.Unmarshal(body, &payload)
-		openclawMu.Lock()
-		openclawPayloads = append(openclawPayloads, payload)
-		openclawMu.Unlock()
-		logf("   [openclaw] received: text=%v\n", payload["text"])
-		w.WriteHeader(200)
-	})
-
-	listener, err := net.Listen("tcp", ":"+openclawPort)
-	if err != nil {
-		return err
-	}
-	go http.Serve(listener, mux)
-	logf("   OpenClaw receiver on :%s\n", openclawPort)
-	return nil
-}
-
 func registerOpenClawDest() error {
-	// Use a second ngrok tunnel or the same one on a different path
-	// For simplicity, reuse the tunnel URL — the OpenClaw receiver
-	// listens on a different local port, so we need a separate tunnel.
-	// If only one tunnel is available, we use the webhook tunnel URL
-	// and the OpenClaw receiver on the same port won't work.
-	// For now, register with localhost since the server can reach it
-	// if self-hosted. For pingclaw.me, we need the tunnel.
 	resp, body, err := apiPost("/pingclaw/webhook/openclaw", map[string]string{
 		"gateway_url": tunnelURL,
 		"hook_token":  "test-openclaw-token",
@@ -1095,7 +1113,7 @@ func verifyOpenClawReceived() error {
 	return fmt.Errorf("no openclaw payloads received after 10s")
 }
 
-// --- Phase 8: Token rotation ---
+// --- Token rotation ---
 
 func verifyAPIKeyRotation() error {
 	oldKey := apiKey
