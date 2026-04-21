@@ -39,7 +39,7 @@
                         </article>
                         <article class="pc-card">
                             <div class="pc-step-num">Step 02</div>
-                            <h3 class="pc-card-title">Install the iOS app</h3>
+                            <h3 class="pc-card-title">Install the app</h3>
                             <p class="pc-help" style="margin-top: 8px;">Sign in on the app and enable location sharing. PingClaw runs in the background and shares your location when needed.</p>
                         </article>
                         <article class="pc-card">
@@ -52,20 +52,51 @@
             </section>
 
             <section class="pc-section-compact">
-                <div class="pc-container-narrow">
-                    <div class="pc-eyebrow">In use</div>
-                    <h2 class="pc-h2">A quiet utility, not an app you stare at.</h2>
-                    <p class="pc-lead" style="margin-top: 16px;">PingClaw runs in the background. When your AI assistant needs your location, it gets a single coordinate — accurate, current, scoped to you. No history, no map, no notifications.</p>
-
-                    <div class="pc-location-readout" style="margin-top: 32px;">
-                        <div class="pc-location-label">Live readout</div>
-                        <div class="pc-location-coords">
-                            <span>27.1396° S</span>
-                            <span class="pc-location-sep"> · </span>
-                            <span>109.4270° W</span>
-                        </div>
-                        <div class="pc-location-accuracy">± 8m · Updated just now</div>
+                <div class="pc-container" style="display: flex; align-items: center; gap: 48px;">
+                    <div class="pc-inuse-phone" style="flex-shrink: 0;">
+                        <picture>
+                            <source srcset="/phone-dark.png?v=1" media="(prefers-color-scheme: dark)">
+                            <img src="/phone-light.png?v=1" alt="PingClaw app showing location sharing enabled" style="width: 280px; height: auto; display: block;">
+                        </picture>
                     </div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div class="pc-eyebrow">In use</div>
+                        <h2 class="pc-h2">A quiet utility, not an app you stare at.</h2>
+                        <p class="pc-lead" style="margin-top: 16px;">PingClaw runs in the background. When your AI assistant needs your location, it gets the coordinates — accurate, current, scoped to you. No history, no map, no notifications.</p>
+
+                        <div class="pc-location-readout" style="margin-top: 32px;">
+                            <div class="pc-location-label">Live readout</div>
+                            <div class="pc-location-coords">
+                                <span>27.1396° S</span>
+                                <span class="pc-location-sep"> · </span>
+                                <span>109.4270° W</span>
+                            </div>
+                            <div class="pc-location-accuracy">± 8m · Updated just now</div>
+                            <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+                                <a href="https://www.google.com/maps?q=-27.1396,-109.4270" target="_blank" class="pc-btn-ghost pc-btn-sm">Show map</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="pc-section-compact">
+                <div class="pc-container-narrow">
+                    <div class="pc-eyebrow">OpenClaw</div>
+                    <h2 class="pc-h2">Push your location to your AI agent.</h2>
+                    <p class="pc-lead" style="margin-top: 16px;">If you use <a href="https://openclaw.ai">OpenClaw</a>, PingClaw pushes each location update directly to your gateway. Your agent gets your position as context automatically — no polling, no manual queries.</p>
+                    <p class="pc-help" style="margin-top: 16px;">Install the <a href="https://github.com/pingclaw-me/openclaw-skill">PingClaw skill</a> to let your agent fetch your location on demand, or configure gateway push delivery from the dashboard for real-time updates.</p>
+                </div>
+            </section>
+
+            <section class="pc-section-compact">
+                <div class="pc-container-narrow">
+                    <div class="pc-eyebrow">Self-hosting</div>
+                    <h2 class="pc-h2">Run your own server.</h2>
+                    <p class="pc-lead" style="margin-top: 16px;">PingClaw is open source and self-hostable. One binary, no dependencies — SQLite, in-memory cache, no Redis, no Postgres. Your location never leaves your own machine.</p>
+                    <div class="pc-code-block" style="margin-top: 24px;">go install github.com/pingclaw-me/pingclaw-server/cmd/server@latest
+server --local</div>
+                    <p class="pc-help" style="margin-top: 16px;">The app has a <strong>Self-Hosted Server</strong> option on the sign-in screen. Enter your server URL and the pairing token — no Apple or Google account needed. See the <a href="https://github.com/pingclaw-me/pingclaw-server">server repo</a> for details.</p>
                 </div>
             </section>
         </section>
