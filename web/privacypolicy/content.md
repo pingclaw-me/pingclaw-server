@@ -1,5 +1,3 @@
-*Last updated: April 21, 2026*
-
 ## What PingClaw does
 
 PingClaw sends your phone's GPS location to a server so your AI assistant can answer location-aware questions. You control when sharing is on or off.

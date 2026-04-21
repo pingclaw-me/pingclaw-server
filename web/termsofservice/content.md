@@ -1,5 +1,3 @@
-*Last updated: April 18, 2026*
-
 ## Acceptance
 
 By signing up for, downloading, or using PingClaw, you agree to these terms. If you do not agree, do not use the service.
