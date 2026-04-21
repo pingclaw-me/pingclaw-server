@@ -7,13 +7,17 @@
 //   - Static website at pingclaw.me (landing page, dashboard, privacy,
 //     terms, setup help)
 //
-// One Go binary, talks to PostgreSQL.
+// One Go binary. In hosted mode it talks to PostgreSQL + Redis. In
+// --local mode it uses SQLite + in-memory caching (no external deps).
 package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,7 +27,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver
 	"github.com/redis/go-redis/v9"
+	_ "modernc.org/sqlite" // registers "sqlite" driver
 
+	"github.com/pingclaw-me/pingclaw-server/internal/kvstore"
 	"github.com/pingclaw-me/pingclaw-server/internal/mdpage"
 	"github.com/pingclaw-me/pingclaw-server/internal/pingclaw"
 	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
@@ -33,65 +39,100 @@ import (
 
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug-level logging")
+	local := flag.Bool("local", false, "Self-hosted mode: SQLite, no Redis, no social auth")
 	flag.Parse()
 
 	godotenv.Load()
 
 	port := envOrDefault("PORT", "8080")
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		slog.Error("DATABASE_URL not set — supply a PostgreSQL DSN (e.g. postgres://user:pass@host:5432/dbname)")
-		os.Exit(1)
-	}
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		slog.Error("REDIS_URL not set — supply a Redis DSN (e.g. redis://localhost:6379)")
-		os.Exit(1)
-	}
-
 	setupLogging(*debug)
 
-	db, err := initDB(dsn)
-	if err != nil {
-		slog.Error("database init failed", "error", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-	slog.Info("database initialised")
-
-	rdb, err := initRedis(redisURL)
-	if err != nil {
-		slog.Error("redis init failed", "error", err)
-		os.Exit(1)
-	}
-	defer rdb.Close()
-	slog.Info("redis initialised")
-
-	// Social auth (Apple + Google). Tokens can arrive from iOS or web,
-	// each with a different audience (client ID), so we accept both.
-	appleBundleID := envOrDefault("APPLE_BUNDLE_ID", "me.pingclaw.app")
-	appleAudiences := strings.Split(appleBundleID, ",")
-	for i := range appleAudiences {
-		appleAudiences[i] = strings.TrimSpace(appleAudiences[i])
-	}
-	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
-	googleIOSClientID := os.Getenv("GOOGLE_IOS_CLIENT_ID")
-	verifier := socialauth.New(
-		appleAudiences,
-		[]string{googleClientID, googleIOSClientID},
+	var (
+		db       pingclaw.DB
+		rawDB    *sql.DB // for Close() and bootstrap queries
+		kv       kvstore.KVStore
+		verifier *socialauth.Verifier
+		err      error
 	)
-	slog.Info("social auth initialised",
-		"apple_bundle_id", appleBundleID,
-		"google_client_id_set", googleClientID != "",
-		"google_ios_client_id_set", googleIOSClientID != "")
 
-	limiter := ratelimit.New(rdb, time.Hour)
-	limiterFast := ratelimit.New(rdb, time.Minute)
+	if *local {
+		// --- Local mode: SQLite + in-memory KV ---
+		dsn := envOrDefault("DATABASE_URL", "pingclaw.db")
+		rawDB, err = initSQLiteDB(dsn)
+		if err != nil {
+			slog.Error("database init failed", "error", err)
+			os.Exit(1)
+		}
+		db = &sqliteDB{rawDB}
+		slog.Info("database initialised (sqlite)", "path", dsn)
+
+		kv = kvstore.NewMemStore()
+		slog.Info("in-memory store initialised")
+
+		// No social auth in local mode.
+		verifier = nil
+
+		// Bootstrap: create a user + pairing token on first run.
+		bootstrapLocalUser(rawDB, port)
+	} else {
+		// --- Hosted mode: PostgreSQL + Redis ---
+		dsn := os.Getenv("DATABASE_URL")
+		if dsn == "" {
+			slog.Error("DATABASE_URL not set — supply a PostgreSQL DSN (e.g. postgres://user:pass@host:5432/dbname)")
+			os.Exit(1)
+		}
+		redisURL := os.Getenv("REDIS_URL")
+		if redisURL == "" {
+			slog.Error("REDIS_URL not set — supply a Redis DSN (e.g. redis://localhost:6379)")
+			os.Exit(1)
+		}
+
+		rawDB, err = initDB(dsn)
+		if err != nil {
+			slog.Error("database init failed", "error", err)
+			os.Exit(1)
+		}
+		db = rawDB
+		slog.Info("database initialised")
+
+		rdb, err := initRedis(redisURL)
+		if err != nil {
+			slog.Error("redis init failed", "error", err)
+			os.Exit(1)
+		}
+		defer rdb.Close()
+		slog.Info("redis initialised")
+
+		kv = kvstore.NewRedisStore(rdb)
+
+		// Social auth (Apple + Google). Tokens can arrive from iOS or web,
+		// each with a different audience (client ID), so we accept both.
+		appleBundleID := envOrDefault("APPLE_BUNDLE_ID", "me.pingclaw.app")
+		appleAudiences := strings.Split(appleBundleID, ",")
+		for i := range appleAudiences {
+			appleAudiences[i] = strings.TrimSpace(appleAudiences[i])
+		}
+		googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+		googleIOSClientID := os.Getenv("GOOGLE_IOS_CLIENT_ID")
+		verifier = socialauth.New(
+			appleAudiences,
+			[]string{googleClientID, googleIOSClientID},
+		)
+		slog.Info("social auth initialised",
+			"apple_bundle_id", appleBundleID,
+			"google_client_id_set", googleClientID != "",
+			"google_ios_client_id_set", googleIOSClientID != "")
+	}
+	defer rawDB.Close()
+
+	limiter := ratelimit.New(kv, time.Hour)
+	limiterFast := ratelimit.New(kv, time.Minute)
 	rlConfig := pingclaw.RateLimitConfig{
 		PerIPPerHour:          envInt("RATE_LIMIT_IP_PER_HOUR", 10),
 		LocationPostPerMinute: envInt("RATE_LIMIT_LOC_POST_PER_MIN", 30),
 		LocationGetPerMinute:  envInt("RATE_LIMIT_LOC_GET_PER_MIN", 60),
 		ChatGPTURL:            envOrDefault("CHATGPT_GPT_URL", ""),
+		LocalMode:             *local,
 	}
 	oauthConfig := pingclaw.OAuthConfig{
 		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
@@ -112,7 +153,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// PingClaw web dashboard + iOS app endpoints (under /pingclaw/)
-	pc := pingclaw.NewHandler(db, rdb, verifier, limiter, limiterFast, rlConfig, oauthConfig)
+	pc := pingclaw.NewHandler(db, kv, verifier, limiter, limiterFast, rlConfig, oauthConfig)
 	pc.RegisterRoutes(mux)
 
 	// PingClaw MCP server — per-user, authenticated by the user's API key
@@ -190,12 +231,10 @@ func setupLogging(debug bool) {
 	slog.SetDefault(slog.New(handler))
 }
 
+// --- PostgreSQL (hosted mode) ---
+
 // initDB connects to PostgreSQL and applies the PingClaw schema. Tables
 // are created with IF NOT EXISTS so this is idempotent.
-//
-// We retry the initial Connect() loop because in a docker-compose
-// world the Postgres container may not have finished starting up by
-// the time the server boots.
 func initDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -231,8 +270,6 @@ func initDB(dsn string) (*sql.DB, error) {
 }
 
 func applySchema(db *sql.DB) error {
-	// users — the core identity table. No phone number, no email — just
-	// the user_id. Social identities live in user_identities.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS users (
 		user_id    TEXT PRIMARY KEY,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -241,7 +278,6 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 
-	// user_identities — federated identity: one row per (provider, sub).
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_identities (
 		provider      TEXT NOT NULL,
 		provider_sub  TEXT NOT NULL,
@@ -258,9 +294,6 @@ func applySchema(db *sql.DB) error {
 	db.Exec(`ALTER TABLE users DROP COLUMN IF EXISTS phone_number_hash`)
 	db.Exec(`ALTER TABLE user_identities DROP COLUMN IF EXISTS email`)
 
-	// user_webhooks — per-user outgoing webhook (e.g. OpenClaw home agent).
-	// `secret` is the bearer PingClaw replays on outbound POSTs. Stored
-	// plaintext because the server itself uses it on every fire.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_webhooks (
 		user_id    TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
 		url        TEXT NOT NULL,
@@ -271,9 +304,6 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 
-	// user_openclaw_destinations — per-user OpenClaw gateway push destination.
-	// One destination per user. The hook_token is stored plaintext because the
-	// server replays it as Authorization: Bearer on every push.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_openclaw_destinations (
 		destination_id TEXT NOT NULL,
 		user_id        TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
@@ -288,15 +318,6 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 
-	// user_tokens — auth credentials. Only hashes are stored; plaintext is
-	// shown to the user once at creation/rotation.
-	//
-	//   web_session   issued on sign-in, one per browser, used by the
-	//                 dashboard. Adding another doesn't kick existing ones.
-	//   api_key       one per user, created/rotated explicitly. Used by
-	//                 MCP agents.
-	//   pairing_token one per user, created/rotated explicitly. Used by
-	//                 the iOS app.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_tokens (
 		token_hash    TEXT PRIMARY KEY,
 		user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -314,9 +335,166 @@ func applySchema(db *sql.DB) error {
 	return nil
 }
 
-// initRedis parses the REDIS_URL and connects, retrying for a short
-// window so docker-compose can start the server before Redis is fully
-// up.
+// --- SQLite (local mode) ---
+
+// initSQLiteDB opens (or creates) a SQLite database and applies the
+// schema. The database is a single file — no external dependencies.
+func initSQLiteDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+
+	// SQLite requires single-writer to avoid "database is locked".
+	db.SetMaxOpenConns(1)
+
+	// Enable WAL mode for concurrent reads + write performance.
+	db.Exec(`PRAGMA journal_mode=WAL`)
+	// SQLite has foreign keys disabled by default.
+	db.Exec(`PRAGMA foreign_keys=ON`)
+
+	if err := applySQLiteSchema(db); err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func applySQLiteSchema(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS users (
+		user_id    TEXT PRIMARY KEY,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_identities (
+		provider      TEXT NOT NULL,
+		provider_sub  TEXT NOT NULL,
+		user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+		created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (provider, provider_sub)
+	)`); err != nil {
+		return err
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id)`)
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_webhooks (
+		user_id    TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+		url        TEXT NOT NULL,
+		secret     TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_openclaw_destinations (
+		destination_id TEXT NOT NULL,
+		user_id        TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+		gateway_url    TEXT NOT NULL,
+		hook_token     TEXT NOT NULL,
+		hook_path      TEXT NOT NULL DEFAULT 'pingclaw',
+		action         TEXT NOT NULL DEFAULT 'wake' CHECK(action IN ('wake','agent')),
+		session_key    TEXT NOT NULL DEFAULT '',
+		created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_tokens (
+		token_hash    TEXT PRIMARY KEY,
+		user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+		kind          TEXT NOT NULL CHECK(kind IN ('web_session','api_key','pairing_token')),
+		label         TEXT,
+		created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+		last_used_at  TEXT
+	)`); err != nil {
+		return err
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_user_tokens_user ON user_tokens(user_id, kind)`)
+
+	return nil
+}
+
+// sqliteDB wraps a *sql.DB and rewrites queries to be SQLite-compatible:
+//   - now() → datetime('now')
+//
+// The modernc.org/sqlite driver supports $1-style parameters natively,
+// so only the now() function needs translation.
+type sqliteDB struct {
+	*sql.DB
+}
+
+func rewriteQuery(q string) string {
+	return strings.ReplaceAll(q, "now()", "datetime('now')")
+}
+
+func (s *sqliteDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return s.DB.ExecContext(ctx, rewriteQuery(query), args...)
+}
+
+func (s *sqliteDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return s.DB.QueryContext(ctx, rewriteQuery(query), args...)
+}
+
+func (s *sqliteDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return s.DB.QueryRowContext(ctx, rewriteQuery(query), args...)
+}
+
+// BeginTx returns a wrapped transaction that also rewrites queries.
+func (s *sqliteDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return s.DB.BeginTx(ctx, opts)
+}
+
+// --- Bootstrap (local mode) ---
+
+// bootstrapLocalUser creates a default user and pairing token on first
+// run in local mode. If the user already exists, it does nothing.
+func bootstrapLocalUser(db *sql.DB, port string) {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		slog.Error("bootstrap: could not count users", "error", err)
+		return
+	}
+	if count > 0 {
+		return // already bootstrapped
+	}
+
+	userID := "usr_local"
+	token := pingclaw.GenerateToken("pt_")
+	hash := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	if _, err := db.Exec(
+		`INSERT INTO users (user_id) VALUES (?)`, userID); err != nil {
+		slog.Error("bootstrap: user creation failed", "error", err)
+		return
+	}
+	if _, err := db.Exec(
+		`INSERT INTO user_tokens (token_hash, user_id, kind, label) VALUES (?, ?, 'pairing_token', 'bootstrap')`,
+		tokenHash, userID); err != nil {
+		slog.Error("bootstrap: token creation failed", "error", err)
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("=== PingClaw Local Mode ===")
+	fmt.Printf("Server URL:    http://localhost:%s\n", port)
+	fmt.Printf("Pairing Token: %s\n", token)
+	fmt.Println()
+	fmt.Println("Enter these in the PingClaw app:")
+	fmt.Println("  1. Tap \"Self-Hosted\" on the sign-in screen")
+	fmt.Println("  2. Enter the server URL and pairing token")
+	fmt.Println("  3. Tap \"Connect\"")
+	fmt.Println("===============================")
+	fmt.Println()
+}
+
+// --- Redis (hosted mode) ---
+
 func initRedis(redisURL string) (*redis.Client, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {

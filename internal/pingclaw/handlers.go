@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,15 +25,24 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 
+	"github.com/pingclaw-me/pingclaw-server/internal/kvstore"
 	"github.com/pingclaw-me/pingclaw-server/internal/ratelimit"
 	"github.com/pingclaw-me/pingclaw-server/internal/socialauth"
 )
 
+// DB is the database interface used by the handler. Both *sql.DB and
+// the SQLite query-rewriting wrapper satisfy this.
+type DB interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 type Handler struct {
-	db          *sql.DB
-	rdb         *redis.Client
+	db          DB
+	kv          kvstore.KVStore
 	verifier    *socialauth.Verifier
 	limiter     *ratelimit.Limiter // 1-hour window (sign-in)
 	limiterFast *ratelimit.Limiter // 1-minute window (location)
@@ -48,9 +56,10 @@ type RateLimitConfig struct {
 	LocationPostPerMinute int    // per-user POST /location cap (default 30)
 	LocationGetPerMinute  int    // per-user GET /location cap (default 60)
 	ChatGPTURL            string // deep link to the PingClaw custom GPT
+	LocalMode             bool   // skip SSRF checks on webhook URLs (local mode)
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, limiterFast *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
+func NewHandler(db DB, kv kvstore.KVStore, verifier *socialauth.Verifier, limiter *ratelimit.Limiter, limiterFast *ratelimit.Limiter, cfg RateLimitConfig, oauth OAuthConfig) *Handler {
 	if cfg.PerIPPerHour <= 0 {
 		cfg.PerIPPerHour = 10
 	}
@@ -60,7 +69,7 @@ func NewHandler(db *sql.DB, rdb *redis.Client, verifier *socialauth.Verifier, li
 	if cfg.LocationGetPerMinute <= 0 {
 		cfg.LocationGetPerMinute = 60
 	}
-	return &Handler{db: db, rdb: rdb, verifier: verifier, limiter: limiter, limiterFast: limiterFast, cfg: cfg, oauth: oauth}
+	return &Handler{db: db, kv: kv, verifier: verifier, limiter: limiter, limiterFast: limiterFast, cfg: cfg, oauth: oauth}
 }
 
 // locationTTL is how long a location data point survives in Redis after
@@ -87,8 +96,8 @@ type cachedLocation struct {
 // readLocation pulls the cached location for a user. Returns (nil, nil)
 // if there's nothing cached (either never set or expired).
 func (h *Handler) readLocation(ctx context.Context, userID string) (*cachedLocation, error) {
-	raw, err := h.rdb.Get(ctx, locationKey(userID)).Result()
-	if errors.Is(err, redis.Nil) {
+	raw, err := h.kv.Get(ctx, locationKey(userID))
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -107,7 +116,7 @@ func (h *Handler) writeLocation(ctx context.Context, userID string, loc cachedLo
 	if err != nil {
 		return err
 	}
-	return h.rdb.Set(ctx, locationKey(userID), body, locationTTL).Err()
+	return h.kv.Set(ctx, locationKey(userID), string(body), locationTTL)
 }
 
 // --- Helpers ---
@@ -122,11 +131,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func generateCode() string {
-	return fmt.Sprintf("%06d", mathrand.Intn(1000000))
-}
 
-func generateToken(prefix string) string {
+// GenerateToken creates a random token with the given prefix.
+func GenerateToken(prefix string) string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return prefix + hex.EncodeToString(b)
@@ -167,6 +174,12 @@ func generateWebCode() string {
 //	POST /pingclaw/auth/social
 //	{ "provider": "apple"|"google", "id_token": "<JWT>", "client": "ios"|"web" }
 func (h *Handler) SocialAuth(w http.ResponseWriter, r *http.Request) {
+	if h.verifier == nil {
+		writeJSON(w, 404, map[string]string{
+			"error": "Social sign-in is not available in local mode. Use a pairing token instead.",
+		})
+		return
+	}
 	var req struct {
 		Provider string `json:"provider"`
 		IDToken  string `json:"id_token"`
@@ -280,7 +293,7 @@ func (h *Handler) WebCode(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxUserID).(string)
 
 	code := generateWebCode()
-	if err := h.rdb.Set(r.Context(), webCodeKey(code), userID, webCodeTTL).Err(); err != nil {
+	if err := h.kv.Set(r.Context(), webCodeKey(code), userID, webCodeTTL); err != nil {
 		slog.Error("web code store failed", "error", err)
 		writeError(w, 500, "internal error")
 		return
@@ -320,8 +333,8 @@ func (h *Handler) WebLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// GETDEL: single-use. A used or expired code returns 401.
-	userID, err := h.rdb.GetDel(r.Context(), webCodeKey(code)).Result()
-	if errors.Is(err, redis.Nil) || err != nil || userID == "" {
+	userID, err := h.kv.GetDel(r.Context(), webCodeKey(code))
+	if errors.Is(err, kvstore.ErrKeyNotFound) || err != nil || userID == "" {
 		writeError(w, 401, "invalid or expired code")
 		return
 	}
@@ -382,7 +395,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		hash := hashToken(token)
 
 		// Try Redis cache first.
-		userID, err := h.rdb.Get(r.Context(), authCacheKey(hash)).Result()
+		userID, err := h.kv.Get(r.Context(), authCacheKey(hash))
 		if err == nil && userID != "" {
 			r = r.WithContext(context.WithValue(r.Context(), ctxUserID, userID))
 			next(w, r)
@@ -409,7 +422,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Cache the token→user_id mapping in Redis.
-		h.rdb.Set(r.Context(), authCacheKey(hash), userID, authCacheTTL)
+		h.kv.Set(r.Context(), authCacheKey(hash), userID, authCacheTTL)
 
 		// Best-effort last-used tracking; ignore errors.
 		_, _ = h.db.ExecContext(r.Context(),
@@ -551,7 +564,7 @@ func webhookCacheKey(userID string) string { return "wh:" + userID }
 
 func (h *Handler) lookupWebhook(ctx context.Context, userID string) (hookURL, secret string, ok bool) {
 	// Try Redis cache first.
-	cached, err := h.rdb.Get(ctx, webhookCacheKey(userID)).Result()
+	cached, err := h.kv.Get(ctx, webhookCacheKey(userID))
 	if err == nil {
 		if cached == webhookCacheNone {
 			return "", "", false
@@ -567,16 +580,16 @@ func (h *Handler) lookupWebhook(ctx context.Context, userID string) (hookURL, se
 	err = h.db.QueryRowContext(ctx,
 		`SELECT url, secret FROM user_webhooks WHERE user_id = $1`, userID).Scan(&hookURL, &secret)
 	if err != nil || hookURL == "" {
-		h.rdb.Set(ctx, webhookCacheKey(userID), webhookCacheNone, webhookCacheTTL)
+		h.kv.Set(ctx, webhookCacheKey(userID), webhookCacheNone, webhookCacheTTL)
 		return "", "", false
 	}
 
-	h.rdb.Set(ctx, webhookCacheKey(userID), hookURL+"\n"+secret, webhookCacheTTL)
+	h.kv.Set(ctx, webhookCacheKey(userID), hookURL+"\n"+secret, webhookCacheTTL)
 	return hookURL, secret, true
 }
 
 func (h *Handler) invalidateWebhookCache(ctx context.Context, userID string) {
-	h.rdb.Del(ctx, webhookCacheKey(userID))
+	h.kv.Del(ctx, webhookCacheKey(userID))
 }
 
 // fireUserWebhook POSTs the location payload to the user's configured webhook.
@@ -638,7 +651,7 @@ func (h *Handler) PutWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "url must be a valid http(s) URL")
 		return
 	}
-	if isPrivateHost(parsed.Hostname()) {
+	if !h.cfg.LocalMode && isPrivateHost(parsed.Hostname()) {
 		writeError(w, 400, "webhook URL must not point to a private or reserved address")
 		return
 	}
@@ -792,14 +805,15 @@ func (h *Handler) rotateToken(ctx context.Context, userID, kind, prefix string) 
 		`DELETE FROM user_tokens WHERE user_id = $1 AND kind = $2`, userID, kind); err != nil {
 		return "", err
 	}
-	tok := generateToken(prefix)
+	tok := GenerateToken(prefix)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO user_tokens (token_hash, user_id, kind, label) VALUES ($1, $2, $3, 'rotate')`,
 		hashToken(tok), userID, kind); err != nil {
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET updated_at = now() WHERE user_id = $1`, userID); err != nil {
+		`UPDATE users SET updated_at = $1 WHERE user_id = $2`,
+		time.Now().UTC().Format(time.RFC3339), userID); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -808,7 +822,7 @@ func (h *Handler) rotateToken(ctx context.Context, userID, kind, prefix string) 
 
 	// Invalidate old token cache entries.
 	for _, hash := range oldHashes {
-		h.rdb.Del(ctx, authCacheKey(hash))
+		h.kv.Del(ctx, authCacheKey(hash))
 	}
 	return tok, nil
 }
@@ -893,16 +907,13 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 	resp := response{UserID: userID, Tokens: []tokenRow{}, Identities: []identityRow{}}
 
 	// User row
-	var userCreated, userUpdated time.Time
 	if err := h.db.QueryRowContext(r.Context(),
 		`SELECT created_at, updated_at FROM users WHERE user_id = $1`,
-		userID).Scan(&userCreated, &userUpdated); err != nil {
+		userID).Scan(&resp.CreatedAt, &resp.UpdatedAt); err != nil {
 		slog.Error("data export: user lookup failed", "user_id", userID, "error", err)
 		writeError(w, 500, "internal error")
 		return
 	}
-	resp.CreatedAt = userCreated.UTC().Format(time.RFC3339)
-	resp.UpdatedAt = userUpdated.UTC().Format(time.RFC3339)
 
 	// Identities
 	idRows, idErr := h.db.QueryContext(r.Context(),
@@ -912,9 +923,7 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		defer idRows.Close()
 		for idRows.Next() {
 			var row identityRow
-			var created time.Time
-			if err := idRows.Scan(&row.Provider, &row.ProviderSub, &created); err == nil {
-				row.CreatedAt = created.UTC().Format(time.RFC3339)
+			if err := idRows.Scan(&row.Provider, &row.ProviderSub, &row.CreatedAt); err == nil {
 				resp.Identities = append(resp.Identities, row)
 			}
 		}
@@ -929,16 +938,13 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var t tokenRow
 			var label sql.NullString
-			var created time.Time
-			var lastUsed sql.NullTime
-			if err := rows.Scan(&t.TokenHash, &t.Kind, &label, &created, &lastUsed); err == nil {
-				t.CreatedAt = created.UTC().Format(time.RFC3339)
+			var lastUsed sql.NullString
+			if err := rows.Scan(&t.TokenHash, &t.Kind, &label, &t.CreatedAt, &lastUsed); err == nil {
 				if label.Valid {
 					t.Label = &label.String
 				}
 				if lastUsed.Valid {
-					s := lastUsed.Time.UTC().Format(time.RFC3339)
-					t.LastUsedAt = &s
+					t.LastUsedAt = &lastUsed.String
 				}
 				resp.Tokens = append(resp.Tokens, t)
 			}
@@ -965,13 +971,10 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 	// Webhook (optional)
 	{
 		var wh webhookRow
-		var created, updated time.Time
 		err := h.db.QueryRowContext(r.Context(),
 			`SELECT url, secret, created_at, updated_at FROM user_webhooks WHERE user_id = $1`,
-			userID).Scan(&wh.URL, &wh.Secret, &created, &updated)
+			userID).Scan(&wh.URL, &wh.Secret, &wh.CreatedAt, &wh.UpdatedAt)
 		if err == nil {
-			wh.CreatedAt = created.UTC().Format(time.RFC3339)
-			wh.UpdatedAt = updated.UTC().Format(time.RFC3339)
 			resp.Webhook = &wh
 		}
 	}
@@ -979,14 +982,11 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 	// OpenClaw gateway destination (optional)
 	{
 		var oc openclawDestRow
-		var created, updated time.Time
 		err := h.db.QueryRowContext(r.Context(),
 			`SELECT destination_id, gateway_url, hook_path, action, created_at, updated_at
 			   FROM user_openclaw_destinations WHERE user_id = $1`, userID).Scan(
-			&oc.DestinationID, &oc.GatewayURL, &oc.HookPath, &oc.Action, &created, &updated)
+			&oc.DestinationID, &oc.GatewayURL, &oc.HookPath, &oc.Action, &oc.CreatedAt, &oc.UpdatedAt)
 		if err == nil {
-			oc.CreatedAt = created.UTC().Format(time.RFC3339)
-			oc.UpdatedAt = updated.UTC().Format(time.RFC3339)
 			resp.OpenClawGateway = &oc
 		}
 	}
@@ -1004,7 +1004,7 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var hash string
 			if rows.Scan(&hash) == nil {
-				h.rdb.Del(r.Context(), authCacheKey(hash))
+				h.kv.Del(r.Context(), authCacheKey(hash))
 			}
 		}
 		rows.Close()
@@ -1015,7 +1015,7 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	// but cached data would linger.
 	h.invalidateWebhookCache(r.Context(), userID)
 	h.invalidateOpenClawDestCache(r.Context(), userID)
-	if err := h.rdb.Del(r.Context(), locationKey(userID)).Err(); err != nil {
+	if err := h.kv.Del(r.Context(), locationKey(userID)); err != nil {
 		slog.Warn("delete: redis cache delete failed", "user_id", userID, "error", err)
 	}
 
@@ -1107,7 +1107,7 @@ var hookPathRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
 // lookupOpenClawDest returns the user's OpenClaw gateway destination, if any.
 func (h *Handler) lookupOpenClawDest(ctx context.Context, userID string) (*openclawGatewayDest, error) {
-	cached, err := h.rdb.Get(ctx, openclawDestCacheKey(userID)).Result()
+	cached, err := h.kv.Get(ctx, openclawDestCacheKey(userID))
 	if err == nil {
 		if cached == openclawDestCacheNone {
 			return nil, nil
@@ -1125,7 +1125,7 @@ func (h *Handler) lookupOpenClawDest(ctx context.Context, userID string) (*openc
 		&dest.DestinationID, &dest.GatewayURL, &dest.HookToken,
 		&dest.HookPath, &dest.Action, &dest.SessionKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		h.rdb.Set(ctx, openclawDestCacheKey(userID), openclawDestCacheNone, openclawDestCacheTTL)
+		h.kv.Set(ctx, openclawDestCacheKey(userID), openclawDestCacheNone, openclawDestCacheTTL)
 		return nil, nil
 	}
 	if err != nil {
@@ -1133,12 +1133,12 @@ func (h *Handler) lookupOpenClawDest(ctx context.Context, userID string) (*openc
 	}
 
 	body, _ := json.Marshal(dest)
-	h.rdb.Set(ctx, openclawDestCacheKey(userID), string(body), openclawDestCacheTTL)
+	h.kv.Set(ctx, openclawDestCacheKey(userID), string(body), openclawDestCacheTTL)
 	return &dest, nil
 }
 
 func (h *Handler) invalidateOpenClawDestCache(ctx context.Context, userID string) {
-	h.rdb.Del(ctx, openclawDestCacheKey(userID))
+	h.kv.Del(ctx, openclawDestCacheKey(userID))
 }
 
 // formatLocationText builds the human-readable one-line location string
@@ -1288,6 +1288,10 @@ func (h *Handler) RegisterOpenClawDest(w http.ResponseWriter, r *http.Request) {
 	parsed, err := url.Parse(gatewayURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		writeError(w, 400, "gateway_url must be a valid http(s) URL")
+		return
+	}
+	if !h.cfg.LocalMode && isPrivateHost(parsed.Hostname()) {
+		writeError(w, 400, "gateway URL must not point to a private or reserved address")
 		return
 	}
 	if hookToken == "" {

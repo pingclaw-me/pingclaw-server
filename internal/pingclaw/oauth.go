@@ -76,7 +76,7 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Validate the web code (single-use, same as web-login).
-		userID, err := h.rdb.GetDel(r.Context(), webCodeKey(webCode)).Result()
+		userID, err := h.kv.GetDel(r.Context(), webCodeKey(webCode))
 		if err != nil || userID == "" {
 			h.serveOAuthPage(w, map[string]any{
 				"ClientID":    clientID,
@@ -94,7 +94,7 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 			RedirectURI: redirectURI,
 			ClientID:    clientID,
 		})
-		if err := h.rdb.Set(r.Context(), oauthCodeKey(authCode), data, oauthCodeTTL).Err(); err != nil {
+		if err := h.kv.Set(r.Context(), oauthCodeKey(authCode), string(data), oauthCodeTTL); err != nil {
 			slog.Error("[OAUTH] code store failed", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -161,7 +161,7 @@ func (h *Handler) OAuthToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up and consume the auth code (single-use).
-	raw, err := h.rdb.GetDel(r.Context(), oauthCodeKey(code)).Result()
+	raw, err := h.kv.GetDel(r.Context(), oauthCodeKey(code))
 	if err != nil || raw == "" {
 		writeError(w, 400, "invalid or expired code")
 		return

@@ -16,3 +16,19 @@ data/
 
 # Go build artifacts from local testing.
 /pingclaw-server
+/server
+/localtest
+/hostedtest
+/openclaw-mock
+/output
+
+# Test artifacts.
+hostedtest.env
+hostedtest.log
+localtest.log
+test_pingclaw.db
+test_pingclaw.db-wal
+test_pingclaw.db-shm
+pingclaw.db
+pingclaw.db-wal
+pingclaw.db-shm

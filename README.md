@@ -1,140 +1,231 @@
 # pingclaw-server
 
-The Go server that powers [PingClaw](https://pingclaw.me) — a quiet
-location utility that lets your AI assistant know where you are when it
-needs to.
+A self-hostable Go server that gives your AI assistant your current GPS location — one binary, no external dependencies in local mode.
 
-One Go binary backed by PostgreSQL (identity + tokens + webhooks) and
-Redis (ephemeral 24h location cache). Hosts:
+Your phone runs the PingClaw app and sends its position to this server. Your AI agent reads it via MCP, or the server pushes it to your OpenClaw gateway. Nothing is stored permanently. Nothing phones home.
 
-- **iOS / web auth + location API** under `/pingclaw/*` — used by the
-  PingClaw iOS app and the web dashboard.
-- **Per-user MCP server** at `/pingclaw/mcp` — exposes `get_my_location`
-  to MCP clients (Claude Code, Claude Desktop via `mcp-remote`, VS Code,
-  Cursor, Windsurf, Zed). Each call is scoped to the user whose API key
-  is in the `Authorization` header.
-- **Outbound webhook firing** — when the phone reports a new location,
-  POSTs to a per-user URL (e.g. an OpenClaw home agent) with a bearer
-  secret the receiver verifies.
-- **Marketing site + dashboard** at `/` — landing page, sign-in flow,
-  credential management, MCP config snippets, privacy policy, terms.
-
-## Run it
-
-The simplest path is the docker-compose stack (server + Postgres + Redis):
+## Quick start (self-hosted)
 
 ```bash
-cp .env.example .env             # defaults are fine for local
+go install github.com/pingclaw-me/pingclaw-server/cmd/server@latest
+server --local
+```
+
+That's it. The server starts with a SQLite database, prints a pairing token, and listens on port 8080:
+
+```
+=== PingClaw Local Mode ===
+Server URL:    http://localhost:8080
+Pairing Token: pt_a1b2c3d4e5f6...
+
+Enter these in the PingClaw app:
+  1. Tap "Self-Hosted" on the sign-in screen
+  2. Enter the server URL and pairing token
+  3. Tap "Connect"
+===============================
+```
+
+Open the PingClaw app, tap **Self-Hosted Server**, enter the URL and token, and your location starts flowing. No Apple or Google account required. No Redis. No Postgres. One file (`pingclaw.db`) holds everything.
+
+### Reaching the server from your phone
+
+Your phone needs to reach the server over the network. Pick whichever fits your setup:
+
+**Tailscale** (recommended) — if both your machine and phone are on the same tailnet, use the Tailscale hostname:
+
+```bash
+server --local
+# Use http://my-machine.tail1234.ts.net:8080 in the app
+```
+
+To expose it outside your tailnet (e.g. from cellular):
+
+```bash
+tailscale funnel 8080
+# Use the https://... URL Tailscale prints
+```
+
+**ngrok** — punch through NAT without any network config:
+
+```bash
+server --local
+ngrok http 8080
+# Use the https://xxxx.ngrok-free.app URL in the app
+```
+
+**Same WiFi** — if your phone and machine are on the same network, use the LAN IP directly:
+
+```bash
+server --local
+# Use http://192.168.1.x:8080 in the app
+```
+
+## What the server never does
+
+- Never stores location history — only the single most recent position exists
+- Never writes location to a permanent database — it lives in memory (or SQLite) with a 24-hour TTL, then disappears
+- Never phones home — no telemetry, no analytics, no update checks
+- Never sends data to third parties — your location goes only where you configure it
+- Never stores plaintext API keys — only irreversible SHA-256 hashes
+
+## Data architecture
+
+**Local mode** (`--local`): SQLite for user accounts and tokens. Location is held in memory with a 24-hour TTL — if the server restarts, the cached position is gone. This is intentional: location is ephemeral.
+
+**Hosted mode** (default): PostgreSQL for user accounts and tokens. Redis for the ephemeral location cache (same 24-hour TTL). This mode supports multiple users and Apple/Google Sign-In.
+
+In both modes, location never touches persistent storage. The privacy guarantee is structural, not policy.
+
+| Store | What it holds |
+|---|---|
+| SQLite or PostgreSQL | Users, identity links, token hashes, webhook configs |
+| Memory or Redis | Most recent location per user (24h TTL) |
+| Nothing | Location history, movement patterns, historical positions |
+
+## MCP server
+
+The server includes a built-in [MCP](https://modelcontextprotocol.io/) server at `/pingclaw/mcp`. It exposes a single tool — `get_my_location` — that returns the user's current position. No separate process, no sidecar, no plugin install.
+
+Paste this into your MCP client config. Use `localhost` if the agent runs on the same machine, or your Tailscale/ngrok URL if it's remote:
+
+**Claude Code** (`~/.claude.json`):
+```json
+{
+  "mcpServers": {
+    "pingclaw": {
+      "type": "http",
+      "url": "http://localhost:8080/pingclaw/mcp",
+      "headers": { "Authorization": "Bearer YOUR_API_KEY" }
+    }
+  }
+}
+```
+
+**Cursor** (`~/.cursor/mcp.json`), **VS Code** (`.vscode/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`) — same shape, same keys.
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "pingclaw": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:8080/pingclaw/mcp",
+               "--header", "Authorization:Bearer YOUR_API_KEY"]
+    }
+  }
+}
+```
+
+Generate an API key by running the server, pairing the app, and calling:
+
+```bash
+curl -X POST http://localhost:8080/pingclaw/auth/rotate-api-key \
+  -H "Authorization: Bearer YOUR_PAIRING_TOKEN"
+```
+
+## OpenClaw webhook
+
+If you use [OpenClaw](https://openclaw.ai), the server can push each location update directly to your gateway. Every time the phone sends a position, the server POSTs:
+
+```json
+POST https://your-gateway:18789/hooks/pingclaw
+Authorization: Bearer your-hook-token
+
+{
+  "text": "Location update: 40.1031, -75.3610 ±8m (gps)",
+  "mode": "now"
+}
+```
+
+The PingClaw server must be able to reach your gateway over the network. If both run on the same machine, `localhost` works. If they're on different machines, use a Tailscale hostname or public URL.
+
+Configure it from the web dashboard or via the API:
+
+```bash
+curl -X POST http://localhost:8080/pingclaw/webhook/openclaw \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gateway_url": "https://my-gateway.tail1234.ts.net:18789",
+    "hook_token": "your-hook-token",
+    "hook_path": "pingclaw",
+    "action": "wake"
+  }'
+```
+
+For testing without a real OpenClaw setup, use the included mock receiver:
+
+```bash
+go run ./cmd/openclaw-mock --register --token YOUR_TOKEN
+```
+
+## Standard webhooks
+
+For non-OpenClaw setups, the server can POST location updates to any URL. The receiver must be reachable from the PingClaw server — use a Tailscale hostname, ngrok tunnel, or public URL:
+
+```bash
+curl -X PUT http://localhost:8080/pingclaw/webhook \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-receiver.example.com/location", "secret": "your-secret"}'
+```
+
+Each location update fires a POST with `Authorization: Bearer your-secret` and a JSON body containing lat, lng, accuracy, and activity.
+
+## Full deployment (Docker)
+
+For running as a persistent service with multiple users and social sign-in:
+
+```bash
+cp .env.example .env    # edit with your Postgres/Redis URLs and OAuth credentials
 docker compose up --build
 ```
 
-Then open `http://localhost:8090/` (the docker-compose stack maps the
-server to host port 8090 to avoid conflicting with anything you might
-already have on 8080). Sign in with any phone number — the verification
-code is printed to the server log, there is no SMS provider configured.
-Generate a Pairing Token from the dashboard and paste it into the iOS
-app.
+The docker-compose stack includes PostgreSQL and Redis for local development. For production, use managed services (see [deployment guide](docs/deployment-instructions.md)).
 
-To run the binary directly against a local Postgres:
-
-```bash
-export DATABASE_URL=postgres://localhost/pingclaw
-go run ./cmd/server
-```
-
-## Layout
-
-```
-cmd/
-  server/         the HTTP server entry point
-  openclaw-mock/  small CLI that pretends to be an OpenClaw receiver,
-                  for testing webhook delivery end-to-end
-internal/
-  pingclaw/       all PingClaw HTTP handlers + MCP tools
-  mdpage/         markdown→HTML rendering for prose pages and fragments
-db/migrations/    snapshot of the schema (the server applies equivalent
-                  CREATE TABLE statements at startup)
-web/              static website + dashboard (HTML/CSS/JS, prose markdown)
-Dockerfile, docker-compose.yml — local + production deploy
-```
-
-## Endpoints
-
-PingClaw API (used by the iOS app and the dashboard JS):
-
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/pingclaw/auth/social` | verify Apple/Google identity token, issue `pairing_token` (iOS) or `web_session` (web) |
-| POST | `/pingclaw/auth/web-login` | exchange a phone-generated code for a `web_session` |
-| POST | `/pingclaw/auth/web-code` | (auth'd) generate an 8-char code the user types into the web dashboard |
-| GET  | `/pingclaw/auth/me` | which token kinds the user has |
-| GET  | `/pingclaw/auth/data` | full data export (transparency view) |
-| POST | `/pingclaw/auth/rotate-api-key` | mint/rotate the `api_key` |
-| POST | `/pingclaw/auth/rotate-pairing-token` | mint/rotate the `pairing_token` |
-| DELETE | `/pingclaw/auth/account` | delete the user and all their data |
-| GET / POST | `/pingclaw/location` | read or write the user's last known location |
-| GET / PUT / DELETE | `/pingclaw/webhook` | manage outbound webhook URL + secret |
-| POST | `/pingclaw/webhook/test` | fire a synthetic POST to the configured webhook |
-| POST / GET | `/pingclaw/mcp` | MCP server (Streamable HTTP) — Bearer auth via the user's API key |
+The server requires `DATABASE_URL` and `REDIS_URL` in hosted mode. Schema is applied automatically on startup.
 
 ## Configuration
 
-Everything runs from environment variables (see `.env.example`):
+All settings are environment variables. In `--local` mode, none are required.
 
-- `PORT` — listen port (default `8080`)
-- `DATABASE_URL` — PostgreSQL DSN (required, no default)
-- `REDIS_URL` — Redis DSN (required; stores location data with a 24-hour TTL)
-- `LOG_FILE` — server log (default `logs/server.log`)
-- `APPLE_BUNDLE_ID` — the iOS bundle ID used as the JWT audience for Apple Sign-In (default `me.pingclaw.app`)
-- `GOOGLE_CLIENT_ID` — the OAuth client ID from Google Cloud Console (required for Google Sign-In)
-- `RATE_LIMIT_IP_PER_HOUR` — max sign-in attempts per IP per hour (default `10`)
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `PORT` | `8080` | No | Listen port |
+| `DATABASE_URL` | `pingclaw.db` (local) | Hosted only | PostgreSQL DSN |
+| `REDIS_URL` | — | Hosted only | Redis DSN |
+| `APPLE_BUNDLE_ID` | `me.pingclaw.app` | No | JWT audience for Apple Sign-In (comma-separated for multiple) |
+| `GOOGLE_CLIENT_ID` | — | Hosted only | Google OAuth client ID |
+| `GOOGLE_IOS_CLIENT_ID` | — | No | Separate iOS Google client ID |
+| `RATE_LIMIT_IP_PER_HOUR` | `10` | No | Sign-in attempts per IP per hour |
+| `RATE_LIMIT_LOC_POST_PER_MIN` | `30` | No | Location updates per user per minute |
+| `RATE_LIMIT_LOC_GET_PER_MIN` | `60` | No | Location reads per user per minute |
+| `OAUTH_CLIENT_ID` | — | No | ChatGPT GPT Action client ID |
+| `OAUTH_CLIENT_SECRET` | — | No | ChatGPT GPT Action client secret |
 
-Sign-in uses Apple and Google identity tokens — no phone number or SMS.
+Flags:
+- `--local` — SQLite + in-memory cache, no external dependencies, no social sign-in
+- `--debug` — verbose JSON logging
 
-Run with `--debug` to bump log level to debug.
+## Security model
 
-## Deploying to Digital Ocean
+**Token storage**: API keys, pairing tokens, and web sessions are stored as SHA-256 hashes. The plaintext is shown once at creation and cannot be retrieved from the server.
 
-Target architecture: server droplet (or App Platform), DO managed
-PostgreSQL, DO managed Redis.
+**What a self-host operator can see**: The SQLite database contains user IDs, token hashes (not plaintext), webhook URLs, and webhook secrets (plaintext, because the server must replay them). Location data is in memory only and not visible in the database file.
 
-1. Create a managed Postgres database; copy the connection string into
-   `DATABASE_URL`. Use `?sslmode=require`.
-2. Create a managed Redis; copy into `REDIS_URL`. Redis holds the
-   ephemeral location cache (24h TTL) — the server requires it to be
-   reachable on startup.
-3. Deploy the container built from this `Dockerfile`. The schema is
-   applied automatically on first boot (idempotent `CREATE TABLE IF NOT
-   EXISTS`).
+**What a self-host operator cannot see**: Plaintext API keys or pairing tokens (only hashes are stored). Location history (only the current position exists, and only in memory).
 
-## Data layout
+**SSRF protection**: Webhook and OpenClaw gateway URLs are validated against private/reserved address ranges. In `--local` mode this check is relaxed to allow `localhost` receivers.
 
-| Store | Holds |
-|---|---|
-| **PostgreSQL** | `users` (phone hash + identity), `user_tokens` (api_key/pairing_token/web_session hashes), `user_webhooks` (URL + secret) |
-| **Redis** | `loc:<user_id>` — most recent location with a **24-hour TTL**. Nothing about location is ever written to Postgres. |
-
-## Development
-
-```bash
-# Build
-go build ./cmd/server
-
-# End-to-end webhook test against the docker-compose stack
-docker compose up -d postgres redis
-DATABASE_URL=postgres://pingclaw:pingclaw@localhost:5433/pingclaw?sslmode=disable \
-REDIS_URL=redis://localhost:6380 \
-go run ./cmd/server &
-go run ./cmd/openclaw-mock --register --token ak_xxx
-```
-
-See `webhook-test.md` for the full end-to-end webhook walkthrough.
+**Auth in local mode**: No Apple or Google credentials are needed. The server generates a pairing token on first run. Social sign-in endpoints return 404.
 
 ## Related repos
 
-- **iOS app** — [pingclaw-ios](https://github.com/pingclaw-me/pingclaw-ios) (the
-  PingClaw app users install on their phone; pairs to this server with
-  the pairing token).
+| Repo | Description |
+|---|---|
+| [pingclaw-ios](https://github.com/pingclaw-me/pingclaw-ios) | iOS app (SwiftUI). Background location, Sign in with Apple + Google. |
+| [pingclaw-android](https://github.com/pingclaw-me/pingclaw-android) | Android app (Kotlin, Jetpack Compose). Same thing, different platform. |
+| [openclaw-skill](https://github.com/pingclaw-me/openclaw-skill) | OpenClaw skill — teaches the agent to fetch location from PingClaw on demand. |
 
 ## License
 
@@ -142,5 +233,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ## Security
 
-To report a vulnerability, see [SECURITY.md](./SECURITY.md). Please
-report privately rather than via a public issue.
+To report a vulnerability, see [SECURITY.md](./SECURITY.md). Please report privately rather than via a public issue.
