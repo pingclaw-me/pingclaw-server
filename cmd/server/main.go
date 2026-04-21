@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -74,6 +75,9 @@ func main() {
 
 		// Bootstrap: create a user + pairing token on first run.
 		bootstrapLocalUser(rawDB, port)
+
+		// Always print reachable URLs on startup.
+		printLocalURLs(port)
 	} else {
 		// --- Hosted mode: PostgreSQL + Redis ---
 		dsn := os.Getenv("DATABASE_URL")
@@ -491,6 +495,34 @@ func bootstrapLocalUser(db *sql.DB, port string) {
 	fmt.Println("  3. Tap \"Connect\"")
 	fmt.Println("===============================")
 	fmt.Println()
+}
+
+// printLocalURLs shows all reachable URLs on every --local startup.
+func printLocalURLs(port string) {
+	fmt.Println()
+	fmt.Printf("Listening on:\n")
+	fmt.Printf("  http://localhost:%s\n", port)
+	if ip := lanIP(); ip != "" {
+		fmt.Printf("  http://%s:%s  (use this in the app)\n", ip, port)
+	}
+	fmt.Println()
+}
+
+// lanIP returns the first non-loopback IPv4 address, or "" if none found.
+func lanIP() string {
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
 
 // --- Redis (hosted mode) ---
