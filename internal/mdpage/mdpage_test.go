@@ -196,12 +196,15 @@ func TestMarkdownHandler(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	if ct := w.Header().Get("Content-Type"); ct != "text/markdown; charset=utf-8" {
-		t.Fatalf("expected text/markdown, got %s", ct)
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected application/json, got %s", ct)
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, "# Privacy") {
-		t.Fatalf("expected raw markdown, got %s", body)
+		t.Fatalf("expected markdown in content field, got %s", body)
+	}
+	if !strings.Contains(body, "last_updated") {
+		t.Fatal("expected last_updated field in response")
 	}
 	if strings.Contains(body, "<h1>") {
 		t.Fatal("should return raw markdown, not HTML")

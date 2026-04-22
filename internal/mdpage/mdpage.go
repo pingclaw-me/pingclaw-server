@@ -17,6 +17,7 @@ package mdpage
 
 import (
 	"bytes"
+	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -83,9 +84,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// NewMarkdownHandler returns an http.Handler that serves the raw markdown
-// content with text/markdown content type. Used by mobile apps to fetch
-// prose content and render it natively.
+// NewMarkdownHandler returns an http.Handler that serves the markdown
+// content as JSON with a last_updated date. Used by mobile apps to
+// fetch prose content and render it natively.
+//
+// Response: {"content": "## ...", "last_updated": "April 21, 2026"}
 func NewMarkdownHandler(contentPath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentMD, err := os.ReadFile(contentPath)
@@ -94,9 +97,18 @@ func NewMarkdownHandler(contentPath string) http.Handler {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+
+		lastUpdated := "—"
+		if info, err := os.Stat(contentPath); err == nil {
+			lastUpdated = info.ModTime().Format("January 2, 2006")
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Write(contentMD)
+		json.NewEncoder(w).Encode(map[string]string{
+			"content":      string(contentMD),
+			"last_updated": lastUpdated,
+		})
 	})
 }
 
