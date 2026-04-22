@@ -183,7 +183,55 @@ func TestHandlerReadsOnEveryRequest(t *testing.T) {
 	}
 }
 
-// --- Verify both types implement http.Handler ---
+// --- Markdown handler tests ---
+
+func TestMarkdownHandler(t *testing.T) {
+	md := tempFile(t, "# Privacy\n\nWe respect your data.\n")
+
+	h := NewMarkdownHandler(md)
+	r := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/markdown; charset=utf-8" {
+		t.Fatalf("expected text/markdown, got %s", ct)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "# Privacy") {
+		t.Fatalf("expected raw markdown, got %s", body)
+	}
+	if strings.Contains(body, "<h1>") {
+		t.Fatal("should return raw markdown, not HTML")
+	}
+}
+
+func TestMarkdownHandlerCacheHeader(t *testing.T) {
+	md := tempFile(t, "test\n")
+
+	h := NewMarkdownHandler(md)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+
+	cc := w.Header().Get("Cache-Control")
+	if cc == "" {
+		t.Fatal("expected Cache-Control header")
+	}
+}
+
+func TestMarkdownHandlerMissingFile(t *testing.T) {
+	h := NewMarkdownHandler("/nonexistent/file.md")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+
+	if w.Code != 500 {
+		t.Fatalf("expected 500 for missing file, got %d", w.Code)
+	}
+}
+
+// --- Verify all types implement http.Handler ---
 
 func TestHandlerImplementsHTTPHandler(t *testing.T) {
 	tmpl := tempFile(t, `{{.Content}}`)
@@ -191,4 +239,5 @@ func TestHandlerImplementsHTTPHandler(t *testing.T) {
 
 	var _ http.Handler = NewHandler(tmpl, md)
 	var _ http.Handler = NewFragmentHandler(md)
+	var _ http.Handler = NewMarkdownHandler(md)
 }

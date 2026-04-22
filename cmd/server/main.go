@@ -183,6 +183,10 @@ func main() {
 	mux.Handle("/termsofservice", termsHandler)
 	mux.Handle("/termsofservice/", termsHandler)
 
+	// Raw markdown API for mobile apps to render natively.
+	mux.Handle("GET /pingclaw/content/privacy", mdpage.NewMarkdownHandler("web/privacypolicy/content.md"))
+	mux.Handle("GET /pingclaw/content/terms", mdpage.NewMarkdownHandler("web/termsofservice/content.md"))
+
 	// Setup sub-sections — each rendered as a markdown fragment and
 	// injected into the dashboard's Setup card on demand.
 	mux.Handle("/setup/ios.html", mdpage.NewFragmentHandler("web/setup/ios.md"))

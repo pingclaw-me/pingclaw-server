@@ -83,6 +83,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// NewMarkdownHandler returns an http.Handler that serves the raw markdown
+// content with text/markdown content type. Used by mobile apps to fetch
+// prose content and render it natively.
+func NewMarkdownHandler(contentPath string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentMD, err := os.ReadFile(contentPath)
+		if err != nil {
+			slog.Error("markdown: read content failed", "path", contentPath, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Write(contentMD)
+	})
+}
+
 // NewFragmentHandler returns an http.Handler that reads a markdown file
 // on every request, converts it to HTML, and returns the HTML fragment
 // (no page shell). Use this for content that's injected into another
