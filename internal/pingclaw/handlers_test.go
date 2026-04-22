@@ -485,6 +485,140 @@ func TestRequireAuthMissingToken(t *testing.T) {
 	}
 }
 
+// --- Integration activity tracking ---
+
+func TestRecordAndGetIntegrationActivity(t *testing.T) {
+	kv := kvstore.NewMemStore()
+	defer kv.Close()
+	h := &Handler{kv: kv}
+	ctx := context.Background()
+
+	// No activity yet
+	activity := h.getIntegrationActivity(ctx, "usr_test")
+	if len(activity) != 0 {
+		t.Fatalf("expected empty activity, got %v", activity)
+	}
+
+	// Record MCP activity
+	h.recordIntegrationActivity("usr_test", "mcp")
+
+	activity = h.getIntegrationActivity(ctx, "usr_test")
+	if activity["mcp"] == "" {
+		t.Fatal("expected mcp activity timestamp")
+	}
+	if activity["webhook"] != "" {
+		t.Fatal("webhook should have no activity")
+	}
+}
+
+func TestRecordMultipleIntegrationTypes(t *testing.T) {
+	kv := kvstore.NewMemStore()
+	defer kv.Close()
+	h := &Handler{kv: kv}
+	ctx := context.Background()
+
+	h.recordIntegrationActivity("usr_test", "mcp")
+	h.recordIntegrationActivity("usr_test", "webhook")
+	h.recordIntegrationActivity("usr_test", "openclaw")
+
+	activity := h.getIntegrationActivity(ctx, "usr_test")
+	if len(activity) != 3 {
+		t.Fatalf("expected 3 activity entries, got %d: %v", len(activity), activity)
+	}
+	for _, kind := range []string{"mcp", "webhook", "openclaw"} {
+		if activity[kind] == "" {
+			t.Fatalf("expected %s activity", kind)
+		}
+	}
+}
+
+func TestIntegrationActivityIsolatedPerUser(t *testing.T) {
+	kv := kvstore.NewMemStore()
+	defer kv.Close()
+	h := &Handler{kv: kv}
+	ctx := context.Background()
+
+	h.recordIntegrationActivity("usr_a", "mcp")
+	h.recordIntegrationActivity("usr_b", "webhook")
+
+	actA := h.getIntegrationActivity(ctx, "usr_a")
+	actB := h.getIntegrationActivity(ctx, "usr_b")
+
+	if actA["mcp"] == "" {
+		t.Fatal("user A should have mcp activity")
+	}
+	if actA["webhook"] != "" {
+		t.Fatal("user A should not have webhook activity")
+	}
+	if actB["webhook"] == "" {
+		t.Fatal("user B should have webhook activity")
+	}
+	if actB["mcp"] != "" {
+		t.Fatal("user B should not have mcp activity")
+	}
+}
+
+func TestIntegrationActivityTimestampFormat(t *testing.T) {
+	kv := kvstore.NewMemStore()
+	defer kv.Close()
+	h := &Handler{kv: kv}
+	ctx := context.Background()
+
+	h.recordIntegrationActivity("usr_test", "api")
+
+	activity := h.getIntegrationActivity(ctx, "usr_test")
+	ts := activity["api"]
+	if ts == "" {
+		t.Fatal("expected api timestamp")
+	}
+	// Should be valid RFC3339
+	if !strings.Contains(ts, "T") || !strings.Contains(ts, "Z") {
+		t.Fatalf("expected RFC3339 format, got %s", ts)
+	}
+}
+
+func TestIntegrationKey(t *testing.T) {
+	if got := integrationKey("usr_abc", "mcp"); got != "intg:usr_abc:mcp" {
+		t.Fatalf("expected intg:usr_abc:mcp, got %s", got)
+	}
+}
+
+func TestGetIntegrationStatusEndpoint(t *testing.T) {
+	kv := kvstore.NewMemStore()
+	defer kv.Close()
+	h := &Handler{kv: kv}
+
+	// Record some activity
+	h.recordIntegrationActivity("usr_test", "mcp")
+	h.recordIntegrationActivity("usr_test", "webhook")
+
+	// Call the endpoint with user context
+	r := httptest.NewRequest("GET", "/pingclaw/integrations/status", nil)
+	r = r.WithContext(context.WithValue(r.Context(), ctxUserID, "usr_test"))
+	w := httptest.NewRecorder()
+	h.GetIntegrationStatus(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	activity, ok := resp["activity"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected activity map, got %v", resp)
+	}
+	if activity["mcp"] == nil {
+		t.Fatal("expected mcp in activity")
+	}
+	if activity["webhook"] == nil {
+		t.Fatal("expected webhook in activity")
+	}
+	if activity["openclaw"] != nil {
+		t.Fatal("openclaw should not be in activity (never recorded)")
+	}
+}
+
 func TestRequireAuthBadPrefix(t *testing.T) {
 	kv := kvstore.NewMemStore()
 	defer kv.Close()
