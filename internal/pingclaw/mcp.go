@@ -40,6 +40,7 @@ func (h *Handler) NewMCPHandler() http.Handler {
 			if userID == "" {
 				return mcplib.NewToolResultError("not authenticated"), nil
 			}
+			h.recordIntegrationActivity(userID, "mcp")
 			return h.mcpGetMyLocation(ctx, userID), nil
 		},
 	)

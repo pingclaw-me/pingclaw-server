@@ -81,6 +81,35 @@ const locationTTL = 24 * time.Hour
 // location for a given user.
 func locationKey(userID string) string { return "loc:" + userID }
 
+// --- Integration activity tracking ---
+
+// integrationKey returns the KV key for tracking the last activity
+// time of an integration type for a user.
+func integrationKey(userID, kind string) string { return "intg:" + userID + ":" + kind }
+
+const integrationTTL = 30 * 24 * time.Hour // 30 days
+
+// recordIntegrationActivity stores the current time as the last
+// activity for the given integration kind (mcp, webhook, openclaw, chatgpt).
+func (h *Handler) recordIntegrationActivity(userID, kind string) {
+	h.kv.Set(context.Background(), integrationKey(userID, kind),
+		time.Now().UTC().Format(time.RFC3339), integrationTTL)
+}
+
+// getIntegrationActivity returns the last activity time for each
+// integration kind, or nil if never recorded.
+func (h *Handler) getIntegrationActivity(ctx context.Context, userID string) map[string]string {
+	kinds := []string{"mcp", "webhook", "openclaw", "chatgpt", "api"}
+	result := make(map[string]string)
+	for _, kind := range kinds {
+		val, err := h.kv.Get(ctx, integrationKey(userID, kind))
+		if err == nil && val != "" {
+			result[kind] = val
+		}
+	}
+	return result
+}
+
 // cachedLocation is the JSON shape persisted to Redis under loc:<user_id>.
 // All readers (GetLocation, TestWebhook, GetMyData, MCP get_my_location)
 // pull this struct.
@@ -451,6 +480,10 @@ func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal error")
 		return
 	}
+
+	// Record that the location was read (by app, agent, or GPT).
+	h.recordIntegrationActivity(userID, "api")
+
 	if loc == nil {
 		writeJSON(w, 200, map[string]any{
 			"status":      "no_location",
@@ -545,11 +578,13 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 			"activity": req.Activity,
 		}
 		go fireUserWebhook(hookURL, secret, userID, payload)
+		h.recordIntegrationActivity(userID, "webhook")
 	}
 
 	// If the user has an OpenClaw gateway destination, deliver concurrently.
 	if dest, err := h.lookupOpenClawDest(r.Context(), userID); err == nil && dest != nil {
 		go deliverToOpenClaw(dest, req.Location.Lat, req.Location.Lng, req.Location.AccuracyMetres, "gps")
+		h.recordIntegrationActivity(userID, "openclaw")
 	}
 
 	writeJSON(w, 200, map[string]string{"status": "ok"})
@@ -1027,6 +1062,21 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
 }
 
+// --- Integration status ---
+
+// GetIntegrationStatus returns the last activity time for each
+// configured integration. Used by the app's home screen to show
+// live status cards.
+//
+//	GET /pingclaw/integrations/status
+func (h *Handler) GetIntegrationStatus(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(ctxUserID).(string)
+	activity := h.getIntegrationActivity(r.Context(), userID)
+	writeJSON(w, 200, map[string]any{
+		"activity": activity,
+	})
+}
+
 // --- App config ---
 
 // GetConfig returns client-facing configuration that apps fetch at
@@ -1063,6 +1113,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /pingclaw/auth/rotate-api-key", h.requireAuth(h.RotateAPIKey))
 	mux.HandleFunc("DELETE /pingclaw/auth/account", h.requireAuth(h.DeleteAccount))
 	mux.HandleFunc("GET /pingclaw/auth/data", h.requireAuth(h.GetMyData))
+	mux.HandleFunc("GET /pingclaw/integrations/status", h.requireAuth(h.GetIntegrationStatus))
 
 	// OAuth 2.0 (ChatGPT GPT Actions and other OAuth consumers)
 	mux.HandleFunc("GET /pingclaw/oauth/authorize", h.OAuthAuthorize)
