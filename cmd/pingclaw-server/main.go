@@ -42,6 +42,7 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable debug-level logging")
 	local := flag.Bool("local", false, "Self-hosted mode: SQLite, no Redis, no social auth")
 	newToken := flag.Bool("token", false, "Generate a new pairing token (requires --local)")
+	portFlag := flag.String("port", "", "Listen port (default 8080, overrides PORT env)")
 	flag.Parse()
 
 	if *newToken && !*local {
@@ -51,7 +52,10 @@ func main() {
 
 	godotenv.Load()
 
-	port := envOrDefault("PORT", "8080")
+	port := *portFlag
+	if port == "" {
+		port = envOrDefault("PORT", "8080")
+	}
 	setupLogging(*debug)
 
 	var (

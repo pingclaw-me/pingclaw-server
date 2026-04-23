@@ -1,6 +1,6 @@
 # pingclaw-server
 
-A self-hostable Go server that gives your AI assistant your current GPS location — one binary, no external dependencies in local mode.
+A self-hostable Go server that gives your AI agent your current location — one binary, no external dependencies in local mode.
 
 Your phone runs the PingClaw app and sends its position to this server. Your AI agent reads it via MCP, or the server pushes it to your OpenClaw gateway. Nothing is stored permanently. Nothing phones home.
 
@@ -8,7 +8,7 @@ Your phone runs the PingClaw app and sends its position to this server. Your AI 
 
 ```bash
 go install github.com/pingclaw-me/pingclaw-server/cmd/pingclaw-server@latest
-pingclaw-pingclaw-server --local
+pingclaw-server --local
 ```
 
 That's it. The server starts with a SQLite database, prints a pairing token, and listens on port 8080:
@@ -101,7 +101,7 @@ Paste this into your MCP client config. Use `localhost` if the agent runs on the
 }
 ```
 
-**Cursor** (`~/.cursor/mcp.json`), **VS Code** (`.vscode/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`) — same shape, same keys.
+**Cursor** (`~/.cursor/mcp.json`), **VS Code** (`.vscode/mcp.json`) — same shape, same keys.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
@@ -153,10 +153,10 @@ curl -X POST http://localhost:8080/pingclaw/webhook/openclaw \
   }'
 ```
 
-For testing without a real OpenClaw setup, use the included mock receiver:
+For testing without a real OpenClaw setup, use [pingclaw-listen](https://github.com/pingclaw-me/pingclaw-tools) from the tools repo:
 
 ```bash
-go run ./cmd/openclaw-mock --register --token YOUR_TOKEN
+go run github.com/pingclaw-me/pingclaw-tools/cmd/pingclaw-listen@latest
 ```
 
 ## Standard webhooks
@@ -170,7 +170,7 @@ curl -X PUT http://localhost:8080/pingclaw/webhook \
   -d '{"url": "https://your-receiver.example.com/location", "secret": "your-secret"}'
 ```
 
-Each location update fires a POST with `Authorization: Bearer your-secret` and a JSON body containing lat, lng, accuracy, and activity.
+Each location update fires a POST with `Authorization: Bearer your-secret` and a JSON body containing lat, lng, and accuracy.
 
 ## Full deployment (Docker)
 
@@ -202,9 +202,12 @@ All settings are environment variables. In `--local` mode, none are required.
 | `RATE_LIMIT_LOC_GET_PER_MIN` | `60` | No | Location reads per user per minute |
 | `OAUTH_CLIENT_ID` | — | No | ChatGPT GPT Action client ID |
 | `OAUTH_CLIENT_SECRET` | — | No | ChatGPT GPT Action client secret |
+| `OAUTH_REDIRECT_URI` | — | No | Allowed OAuth redirect URI (if set, enforced on authorize) |
 
 Flags:
 - `--local` — SQLite + in-memory cache, no external dependencies, no social sign-in
+- `--port 9090` — listen port (overrides `PORT` env var, default 8080)
+- `--token` — generate a new pairing token on startup (requires `--local`)
 - `--debug` — verbose JSON logging
 
 ## Security model
@@ -226,6 +229,7 @@ Flags:
 | [pingclaw-ios](https://github.com/pingclaw-me/pingclaw-ios) | iOS app (SwiftUI). Background location, Sign in with Apple + Google. |
 | [pingclaw-android](https://github.com/pingclaw-me/pingclaw-android) | Android app (Kotlin, Jetpack Compose). Same thing, different platform. |
 | [openclaw-skill](https://github.com/pingclaw-me/openclaw-skill) | OpenClaw skill — teaches the agent to fetch location from PingClaw on demand. |
+| [pingclaw-tools](https://github.com/pingclaw-me/pingclaw-tools) | Development and testing tools: E2E test suites, webhook listener. |
 
 ## License
 
