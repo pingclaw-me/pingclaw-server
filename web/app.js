@@ -483,7 +483,7 @@ async function fetchLocation() {
             el.innerHTML =
                 '<div class="card location-readout">' +
                     '<div class="location-head">' +
-                        '<span>loc · waiting</span>' +
+                        '<span>location</span>' +
                     '</div>' +
                     '<div class="location-body">' +
                         '<p class="help">Open PingClaw on your phone to start sharing your location with your agent.</p>' +
@@ -500,16 +500,13 @@ async function fetchLocation() {
             : age < 3600 ? Math.round(age / 60) + 'm ago'
             : age < 86400 ? Math.round(age / 3600) + 'h ago'
             : Math.round(age / 86400) + 'd ago';
-        const mapsUrl = isIOS
-            ? 'maps://?q=' + loc.lat + ',' + loc.lng
-            : 'https://www.google.com/maps?q=' + loc.lat + ',' + loc.lng;
         const latStr = formatCoord(loc.lat, true);
         const lngStr = formatCoord(loc.lng, false);
         const acc = Math.round(loc.accuracy_metres);
         el.innerHTML =
             '<div class="card location-readout">' +
                 '<div class="location-head">' +
-                    '<span>loc · current</span>' +
+                    '<span>location</span>' +
                     '<span class="status-live"><span class="pulse"></span> live</span>' +
                 '</div>' +
                 '<div class="location-body">' +
@@ -522,9 +519,6 @@ async function fetchLocation() {
                         '<span><b>updated</b> ' + ageStr + '</span>' +
                         '<span><b>ttl</b> 24h</span>' +
                     '</div>' +
-                '</div>' +
-                '<div class="location-foot">' +
-                    '<a href="' + mapsUrl + '" target="_blank" class="btn btn-secondary btn-sm">Show map ↗︎</a>' +
                 '</div>' +
             '</div>';
     } catch (err) {

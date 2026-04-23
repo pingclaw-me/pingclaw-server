@@ -75,7 +75,7 @@
     <!-- live coordinate readout -->
     <div class="readout-card reveal reveal-5">
       <div class="readout-head">
-        <span>loc · current</span>
+        <span>location</span>
         <span class="status-live"><span class="pulse"></span> live</span>
       </div>
       <div class="readout-body">
@@ -110,63 +110,59 @@
       </div>
     </div>
 
-    <div class="client-grid">
-      <div class="client-cell">
+    <div class="client-grid" id="agent-grid">
+      <div class="client-cell" data-agent="chatgpt">
         <span class="c-mode">GPT · One-tap</span>
         <span class="c-name">ChatGPT</span>
         <span class="c-note">Open the PingClaw GPT. The easiest path in.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="code">
         <span class="c-mode">MCP · Pull</span>
         <span class="c-name">Claude Code</span>
         <span class="c-note">Ask "where am I" — gets coords in the loop.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="desktop">
         <span class="c-mode">MCP · Pull</span>
         <span class="c-name">Claude Desktop</span>
         <span class="c-note">Via <span class="mono">mcp-remote</span>. Paste the snippet, done.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="cursor">
         <span class="c-mode">MCP · Pull</span>
         <span class="c-name">Cursor</span>
         <span class="c-note">Add to MCP settings. Works in chat and agent mode.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="zed">
         <span class="c-mode">MCP · Pull</span>
         <span class="c-name">Zed</span>
         <span class="c-note">Context servers. One line in settings.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="vscode">
         <span class="c-mode">MCP · Pull</span>
         <span class="c-name">VS Code</span>
         <span class="c-note">MCP extension support. Shared with Copilot.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell" data-agent="openclaw">
         <span class="c-mode">Push · Native</span>
         <span class="c-name">OpenClaw</span>
         <span class="c-note">Direct gateway delivery. No polling needed.</span>
       </div>
-      <div class="client-cell">
+      <div class="client-cell active" data-agent="webhook">
         <span class="c-mode">Webhook · Push</span>
         <span class="c-name">Anything else</span>
         <span class="c-note">POST with a bearer secret. Roll your own agent.</span>
       </div>
     </div>
 
-    <div class="snippet">
+    <div class="snippet" id="agent-snippet">
       <div class="snippet-head">
-        <span>~/.claude/mcp.json</span>
+        <span id="agent-snippet-file">$ terminal</span>
         <button class="snippet-copy">Copy</button>
       </div>
-      <div class="snippet-body"><span class="com">// one line, and your agent knows where you are</span>
-{
-  <span class="key">"mcpServers"</span>: {
-    <span class="key">"pingclaw"</span>: {
-      <span class="key">"url"</span>: <span class="str">"https://pingclaw.me/pingclaw/mcp"</span>,
-      <span class="key">"headers"</span>: { <span class="key">"Authorization"</span>: <span class="str">"Bearer ak_…"</span> }
-    }
-  }
-}</div>
+      <div class="snippet-body" id="agent-snippet-body"><span class="com"># register a webhook with your API key</span>
+curl -X PUT https://pingclaw.me/pingclaw/webhook \
+  -H <span class="str">"Authorization: Bearer ak_…"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d '{"url":"https://your-receiver/location","secret":"your-secret"}'</div>
     </div>
   </div>
 </section>
@@ -200,9 +196,7 @@
       <div class="step">
         <div class="step-num">STEP 03</div>
         <h3>Connect your agent</h3>
-        <p>In the dashboard, mint an API key and copy a one-line config for your client. Or register a webhook for anything else.
-          <span class="clients">claude-code · claude-desktop · cursor<br>zed · vs-code · openclaw</span>
-        </p>
+        <p>In the dashboard, mint an API key and copy a one-line config for your client. Or register a webhook for anything else.</p>
       </div>
     </div>
   </div>
@@ -465,7 +459,7 @@
       <div id="location-status">
         <div class="card location-readout">
           <div class="location-head">
-            <span>loc · current</span>
+            <span>location</span>
             <span class="status-live"><span class="pulse"></span> live</span>
           </div>
           <div class="location-body">
@@ -657,8 +651,7 @@
           </div>
         </div>
         <div class="btn-row" style="margin-bottom: 8px;">
-          <button class="btn btn-primary btn-sm" onclick="sendOpenClawLocation()">Send location now</button>
-          <button class="btn btn-secondary btn-sm" onclick="testOpenClaw()">Test connection</button>
+          <button class="btn btn-secondary btn-sm" onclick="sendOpenClawLocation()">Send test</button>
           <button class="btn btn-danger btn-sm" onclick="deleteOpenClaw()">Remove</button>
         </div>
         <div id="openclaw-test-status" class="help" style="display: none;"></div>

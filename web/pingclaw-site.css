@@ -562,9 +562,9 @@ section.hero > .container { position: relative; z-index: 1; }
   gap: 6px;
 }
 
-/* note: client cells are not interactive. No hover state — the hover
-   would imply clickability we don't deliver on. This is reference
-   content, not a launcher. */
+.client-cell { cursor: pointer; transition: background 140ms; }
+.client-cell:hover { background: var(--paper-warm); }
+.client-cell.active { background: var(--rust-tint); border-left: 2px solid var(--rust); }
 
 .client-cell .c-name {
   font-family: 'Fraunces', serif;
