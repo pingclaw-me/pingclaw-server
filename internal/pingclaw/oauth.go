@@ -16,6 +16,7 @@ import (
 type OAuthConfig struct {
 	ClientID     string
 	ClientSecret string
+	RedirectURI  string // if set, only this redirect_uri is allowed
 }
 
 const oauthCodeTTL = 5 * time.Minute
@@ -56,6 +57,10 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "redirect_uri is required", http.StatusBadRequest)
 		return
 	}
+	if h.oauth.RedirectURI != "" && redirectURI != h.oauth.RedirectURI {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
 
 	// POST = user submitted the web code from their phone.
 	if r.Method == http.MethodPost {
@@ -64,6 +69,20 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		clientID = r.FormValue("client_id")
 		redirectURI = r.FormValue("redirect_uri")
 		state = r.FormValue("state")
+
+		// Re-validate POST values — hidden form fields are mutable.
+		if clientID != h.oauth.ClientID {
+			http.Error(w, "invalid client_id", http.StatusBadRequest)
+			return
+		}
+		if h.oauth.RedirectURI != "" && redirectURI != h.oauth.RedirectURI {
+			http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+			return
+		}
+		if redirectURI == "" {
+			http.Error(w, "redirect_uri is required", http.StatusBadRequest)
+			return
+		}
 
 		if webCode == "" {
 			h.serveOAuthPage(w, map[string]any{

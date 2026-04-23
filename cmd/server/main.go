@@ -152,6 +152,7 @@ func main() {
 	oauthConfig := pingclaw.OAuthConfig{
 		ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
 		ClientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
+		RedirectURI:  os.Getenv("OAUTH_REDIRECT_URI"),
 	}
 	if oauthConfig.ClientID != "" {
 		slog.Info("oauth enabled", "client_id", oauthConfig.ClientID)

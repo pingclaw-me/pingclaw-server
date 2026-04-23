@@ -401,17 +401,25 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Auth middleware (Bearer api_key) ---
+// --- Auth middleware (Bearer token) ---
 
 type ctxKey string
 
 const ctxUserID ctxKey = "user_id"
+const ctxTokenKind ctxKey = "token_kind"
 
 const authCacheTTL = 5 * time.Minute
 
 func authCacheKey(hash string) string { return "auth:" + hash }
 
+// requireAuth authenticates the request via Bearer token (any kind).
 func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return h.requireAuthKinds(next)
+}
+
+// requireAuthKinds authenticates and optionally restricts which token
+// kinds are allowed. If no kinds are specified, all kinds are accepted.
+func (h *Handler) requireAuthKinds(next http.HandlerFunc, allowedKinds ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") {
@@ -422,41 +430,65 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		hash := hashToken(token)
 
-		// Try Redis cache first.
-		userID, err := h.kv.Get(r.Context(), authCacheKey(hash))
-		if err == nil && userID != "" {
-			r = r.WithContext(context.WithValue(r.Context(), ctxUserID, userID))
-			next(w, r)
-			return
-		}
+		var userID, kind string
 
-		// Cache miss — fall back to Postgres.
-		err = h.db.QueryRowContext(r.Context(),
-			`SELECT user_id FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID)
-		if errors.Is(err, sql.ErrNoRows) {
-			tokenPreview := token
-			if len(tokenPreview) > 12 {
-				tokenPreview = tokenPreview[:12] + "..."
+		// Try Redis cache first. Cached value is "user_id:kind".
+		cached, err := h.kv.Get(r.Context(), authCacheKey(hash))
+		if err == nil && cached != "" {
+			if i := strings.LastIndex(cached, ":"); i > 0 {
+				userID = cached[:i]
+				kind = cached[i+1:]
 			}
-			slog.Warn("[PINGCLAW AUTH] token not in db",
-				"path", r.URL.Path, "token_prefix", tokenPreview)
-			writeError(w, 401, "invalid token")
-			return
-		}
-		if err != nil {
-			slog.Error("auth lookup failed", "error", err)
-			writeError(w, 500, "internal error")
-			return
 		}
 
-		// Cache the token→user_id mapping in Redis.
-		h.kv.Set(r.Context(), authCacheKey(hash), userID, authCacheTTL)
+		if userID == "" {
+			// Cache miss — fall back to Postgres.
+			err = h.db.QueryRowContext(r.Context(),
+				`SELECT user_id, kind FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID, &kind)
+			if errors.Is(err, sql.ErrNoRows) {
+				tokenPreview := token
+				if len(tokenPreview) > 12 {
+					tokenPreview = tokenPreview[:12] + "..."
+				}
+				slog.Warn("[PINGCLAW AUTH] token not in db",
+					"path", r.URL.Path, "token_prefix", tokenPreview)
+				writeError(w, 401, "invalid token")
+				return
+			}
+			if err != nil {
+				slog.Error("auth lookup failed", "error", err)
+				writeError(w, 500, "internal error")
+				return
+			}
 
-		// Best-effort last-used tracking; ignore errors.
-		_, _ = h.db.ExecContext(r.Context(),
-			`UPDATE user_tokens SET last_used_at = now() WHERE token_hash = $1`, hash)
+			// Cache the token→user_id:kind mapping in Redis.
+			h.kv.Set(r.Context(), authCacheKey(hash), userID+":"+kind, authCacheTTL)
 
-		r = r.WithContext(context.WithValue(r.Context(), ctxUserID, userID))
+			// Best-effort last-used tracking; ignore errors.
+			_, _ = h.db.ExecContext(r.Context(),
+				`UPDATE user_tokens SET last_used_at = now() WHERE token_hash = $1`, hash)
+		}
+
+		// Enforce token kind restriction if specified.
+		if len(allowedKinds) > 0 {
+			allowed := false
+			for _, k := range allowedKinds {
+				if kind == k {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				slog.Warn("[PINGCLAW AUTH] token kind not allowed",
+					"path", r.URL.Path, "kind", kind, "allowed", allowedKinds)
+				writeError(w, 403, "this token type cannot access this endpoint")
+				return
+			}
+		}
+
+		ctx := context.WithValue(r.Context(), ctxUserID, userID)
+		ctx = context.WithValue(ctx, ctxTokenKind, kind)
+		r = r.WithContext(ctx)
 		next(w, r)
 	}
 }
@@ -568,13 +600,13 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 				"accuracy_metres": req.Location.AccuracyMetres,
 			},
 		}
-		go fireUserWebhook(hookURL, secret, userID, payload)
+		go fireUserWebhook(hookURL, secret, userID, payload, h.cfg.LocalMode)
 		h.recordIntegrationActivity(userID, "webhook")
 	}
 
 	// If the user has an OpenClaw gateway destination, deliver concurrently.
 	if dest, err := h.lookupOpenClawDest(r.Context(), userID); err == nil && dest != nil {
-		go deliverToOpenClaw(dest, req.Location.Lat, req.Location.Lng, req.Location.AccuracyMetres, "gps")
+		go deliverToOpenClaw(dest, req.Location.Lat, req.Location.Lng, req.Location.AccuracyMetres, "gps", h.cfg.LocalMode)
 		h.recordIntegrationActivity(userID, "openclaw")
 	}
 
@@ -622,13 +654,13 @@ func (h *Handler) invalidateWebhookCache(ctx context.Context, userID string) {
 // Runs in a goroutine — failures are logged but never affect the inbound request.
 // The receiver should verify the Authorization: Bearer header matches the
 // secret it was given when the webhook was registered.
-func fireUserWebhook(hookURL, secret, userID string, payload map[string]any) {
+func fireUserWebhook(hookURL, secret, userID string, payload map[string]any, localMode bool) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("[PINGCLAW WEBHOOK] marshal failed", "user_id", userID, "error", err)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := safeHTTPClient(5*time.Second, localMode)
 	req, err := http.NewRequest("POST", hookURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("[PINGCLAW WEBHOOK] request build failed", "user_id", userID, "url", hookURL, "error", err)
@@ -748,7 +780,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request) {
 		"note":     "Triggered from the PingClaw dashboard.",
 	}
 
-	status, err := fireUserWebhookSync(hookURL, secret, payload)
+	status, err := fireUserWebhookSync(hookURL, secret, payload, h.cfg.LocalMode)
 	if err != nil {
 		slog.Warn("[PINGCLAW WEBHOOK] test delivery failed", "user_id", userID, "url", hookURL, "error", err)
 		writeError(w, 502, "webhook delivery failed")
@@ -764,7 +796,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request) {
 
 // fireUserWebhookSync is the synchronous version of fireUserWebhook used
 // by the test endpoint so we can return delivery status to the caller.
-func fireUserWebhookSync(hookURL, secret string, payload map[string]any) (int, error) {
+func fireUserWebhookSync(hookURL, secret string, payload map[string]any, localMode bool) (int, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, err
@@ -775,7 +807,7 @@ func fireUserWebhookSync(hookURL, secret string, payload map[string]any) (int, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := safeHTTPClient(5*time.Second, localMode)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -1090,15 +1122,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /pingclaw/auth/social", h.SocialAuth)
 	mux.HandleFunc("POST /pingclaw/auth/web-login", h.WebLogin)
 
-	// Authenticated endpoints
+	// Authenticated endpoints — token kind restrictions per endpoint.
+	// "pairing_token" = phone app, "web_session" = dashboard, "api_key" = MCP/agents.
 	mux.HandleFunc("GET /pingclaw/auth/me", h.requireAuth(h.GetMe))
-	mux.HandleFunc("POST /pingclaw/auth/web-code", h.requireAuth(h.WebCode))
+	mux.HandleFunc("POST /pingclaw/auth/web-code", h.requireAuthKinds(h.WebCode, "pairing_token", "web_session"))
 	mux.HandleFunc("GET /pingclaw/location", h.requireAuth(h.GetLocation))
-	mux.HandleFunc("POST /pingclaw/location", h.requireAuth(h.PostLocation))
-	mux.HandleFunc("POST /pingclaw/auth/rotate-pairing-token", h.requireAuth(h.RotatePairingToken))
-	mux.HandleFunc("POST /pingclaw/auth/rotate-api-key", h.requireAuth(h.RotateAPIKey))
-	mux.HandleFunc("DELETE /pingclaw/auth/account", h.requireAuth(h.DeleteAccount))
-	mux.HandleFunc("GET /pingclaw/auth/data", h.requireAuth(h.GetMyData))
+	mux.HandleFunc("POST /pingclaw/location", h.requireAuthKinds(h.PostLocation, "pairing_token"))
+	mux.HandleFunc("POST /pingclaw/auth/rotate-pairing-token", h.requireAuthKinds(h.RotatePairingToken, "web_session"))
+	mux.HandleFunc("POST /pingclaw/auth/rotate-api-key", h.requireAuthKinds(h.RotateAPIKey, "web_session", "pairing_token"))
+	mux.HandleFunc("DELETE /pingclaw/auth/account", h.requireAuthKinds(h.DeleteAccount, "web_session", "pairing_token"))
+	mux.HandleFunc("GET /pingclaw/auth/data", h.requireAuthKinds(h.GetMyData, "web_session", "pairing_token"))
 	mux.HandleFunc("GET /pingclaw/integrations/status", h.requireAuth(h.GetIntegrationStatus))
 
 	// OAuth 2.0 (ChatGPT GPT Actions and other OAuth consumers)
@@ -1106,18 +1139,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /pingclaw/oauth/authorize", h.OAuthAuthorize)
 	mux.HandleFunc("POST /pingclaw/oauth/token", h.OAuthToken)
 
-	// Outgoing webhook configuration (e.g. OpenClaw home agent)
-	mux.HandleFunc("GET /pingclaw/webhook", h.requireAuth(h.GetWebhook))
-	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuth(h.PutWebhook))
-	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuth(h.DeleteWebhook))
-	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuth(h.TestWebhook))
+	// Outgoing webhook configuration — dashboard/app only (not api_key)
+	mux.HandleFunc("GET /pingclaw/webhook", h.requireAuthKinds(h.GetWebhook, "web_session", "pairing_token"))
+	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuthKinds(h.PutWebhook, "web_session", "pairing_token"))
+	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuthKinds(h.DeleteWebhook, "web_session", "pairing_token"))
+	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuthKinds(h.TestWebhook, "web_session", "pairing_token"))
 
-	// OpenClaw gateway push delivery
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw", h.requireAuth(h.RegisterOpenClawDest))
-	mux.HandleFunc("GET /pingclaw/webhook/openclaw", h.requireAuth(h.GetOpenClawDest))
-	mux.HandleFunc("DELETE /pingclaw/webhook/openclaw", h.requireAuth(h.DeleteOpenClawDest))
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw/test", h.requireAuth(h.TestOpenClawDest))
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw/send", h.requireAuth(h.SendOpenClawLocation))
+	// OpenClaw gateway push delivery — dashboard/app only (not api_key)
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw", h.requireAuthKinds(h.RegisterOpenClawDest, "web_session", "pairing_token"))
+	mux.HandleFunc("GET /pingclaw/webhook/openclaw", h.requireAuthKinds(h.GetOpenClawDest, "web_session", "pairing_token"))
+	mux.HandleFunc("DELETE /pingclaw/webhook/openclaw", h.requireAuthKinds(h.DeleteOpenClawDest, "web_session", "pairing_token"))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/test", h.requireAuthKinds(h.TestOpenClawDest, "web_session", "pairing_token"))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/send", h.requireAuthKinds(h.SendOpenClawLocation, "web_session", "pairing_token"))
 }
 
 // --- OpenClaw gateway push delivery ---
@@ -1207,7 +1240,7 @@ func SetOpenClawDeliveryRetryDelay(d time.Duration) { openclawDeliveryRetryDelay
 
 // deliverToOpenClaw POSTs a location update to the user's OpenClaw gateway.
 // Runs in a goroutine — failures are logged but never affect the inbound request.
-func deliverToOpenClaw(dest *openclawGatewayDest, lat, lon, accuracyMeters float64, source string) {
+func deliverToOpenClaw(dest *openclawGatewayDest, lat, lon, accuracyMeters float64, source string, localMode bool) {
 	hookURL := strings.TrimRight(dest.GatewayURL, "/") + "/hooks/" + dest.HookPath
 	text := formatLocationText(lat, lon, accuracyMeters, source)
 
@@ -1225,7 +1258,7 @@ func deliverToOpenClaw(dest *openclawGatewayDest, lat, lon, accuracyMeters float
 		})
 	}
 
-	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	client := safeHTTPClient(openclawDeliveryTimeout, localMode)
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
@@ -1269,7 +1302,7 @@ func deliverToOpenClaw(dest *openclawGatewayDest, lat, lon, accuracyMeters float
 
 // testOpenClawDelivery sends a verification POST to the gateway and returns
 // the HTTP status code. Used during registration and by the test endpoint.
-func testOpenClawDelivery(gatewayURL, hookToken, hookPath string) (int, error) {
+func testOpenClawDelivery(gatewayURL, hookToken, hookPath string, localMode bool) (int, error) {
 	hookURL := strings.TrimRight(gatewayURL, "/") + "/hooks/" + hookPath
 	payload, _ := json.Marshal(map[string]any{
 		"text": "PingClaw connected. Location updates will appear here.",
@@ -1283,7 +1316,7 @@ func testOpenClawDelivery(gatewayURL, hookToken, hookPath string) (int, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+hookToken)
 
-	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	client := safeHTTPClient(openclawDeliveryTimeout, localMode)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -1351,7 +1384,7 @@ func (h *Handler) RegisterOpenClawDest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the gateway is reachable and the token is valid.
-	status, err := testOpenClawDelivery(gatewayURL, hookToken, hookPath)
+	status, err := testOpenClawDelivery(gatewayURL, hookToken, hookPath, h.cfg.LocalMode)
 	if err != nil {
 		slog.Warn("[PINGCLAW OPENCLAW] verification failed", "user_id", userID, "url", gatewayURL, "error", err)
 		writeJSON(w, 422, map[string]string{
@@ -1465,7 +1498,7 @@ func (h *Handler) TestOpenClawDest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := testOpenClawDelivery(dest.GatewayURL, dest.HookToken, dest.HookPath)
+	status, err := testOpenClawDelivery(dest.GatewayURL, dest.HookToken, dest.HookPath, h.cfg.LocalMode)
 	if err != nil {
 		slog.Warn("[PINGCLAW OPENCLAW] test delivery failed", "user_id", userID, "error", err)
 		writeJSON(w, 200, map[string]any{
@@ -1557,7 +1590,7 @@ func (h *Handler) SendOpenClawLocation(w http.ResponseWriter, r *http.Request) {
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", "Bearer "+dest.HookToken)
 
-	client := &http.Client{Timeout: openclawDeliveryTimeout}
+	client := safeHTTPClient(openclawDeliveryTimeout, h.cfg.LocalMode)
 	resp, err := client.Do(req2)
 	if err != nil {
 		slog.Warn("[PINGCLAW OPENCLAW] send location failed", "user_id", userID, "error", err)
@@ -1578,6 +1611,53 @@ func (h *Handler) SendOpenClawLocation(w http.ResponseWriter, r *http.Request) {
 		"location":  map[string]any{"lat": loc.Lat, "lng": loc.Lng},
 		"text":      text,
 	})
+}
+
+// safeHTTPClient returns an HTTP client that enforces SSRF protections
+// at connection time: the custom DialContext resolves the hostname and
+// rejects private/loopback/link-local IPs before connecting. Redirects
+// are disabled to prevent redirect-based SSRF. When localMode is true,
+// IP restrictions are skipped (same as registration-time checks).
+func safeHTTPClient(timeout time.Duration, localMode bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			if !localMode {
+				ips, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+				}
+				for _, ipStr := range ips {
+					ip := net.ParseIP(ipStr)
+					if ip != nil && isPrivateIP(ip) {
+						return nil, fmt.Errorf("connection to private address %s (%s) blocked", host, ipStr)
+					}
+				}
+				// Connect to the first resolved IP to pin the address.
+				if len(ips) > 0 {
+					addr = net.JoinHostPort(ips[0], port)
+				}
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// isPrivateIP returns true if the IP is loopback, private, link-local, or unspecified.
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 // isPrivateHost returns true if the hostname resolves to a private,
@@ -1609,15 +1689,16 @@ func isPrivateHost(hostname string) bool {
 	return false
 }
 
-// clientIP returns the best-guess client IP. Trusts X-Forwarded-For
-// when present (Digital Ocean's load balancer is on our request path
-// and sets it). Strips port from r.RemoteAddr otherwise.
+// clientIP returns the best-guess client IP. Uses the rightmost
+// (last) value in X-Forwarded-For — this is the IP appended by
+// our load balancer (DigitalOcean), which is the only hop we trust.
+// An attacker can prepend arbitrary values to XFF, but they cannot
+// control what our LB appends. Falls back to RemoteAddr if no XFF.
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// XFF can be a comma-separated chain; the first entry is the
-		// original client.
-		if i := strings.Index(xff, ","); i >= 0 {
-			return strings.TrimSpace(xff[:i])
+		// Take the last entry — appended by the trusted load balancer.
+		if i := strings.LastIndex(xff, ","); i >= 0 {
+			return strings.TrimSpace(xff[i+1:])
 		}
 		return strings.TrimSpace(xff)
 	}

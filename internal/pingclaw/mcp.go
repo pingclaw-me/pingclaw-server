@@ -65,9 +65,9 @@ func (h *Handler) mcpAuthMiddleware(next http.Handler) http.Handler {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		hash := hashToken(token)
 
-		var userID string
+		var userID, kind string
 		err := h.db.QueryRowContext(r.Context(),
-			`SELECT user_id FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID)
+			`SELECT user_id, kind FROM user_tokens WHERE token_hash = $1`, hash).Scan(&userID, &kind)
 		if errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("[PINGCLAW MCP] token not in db")
 			http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -76,6 +76,11 @@ func (h *Handler) mcpAuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			slog.Error("[PINGCLAW MCP] auth lookup failed", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if kind != "api_key" {
+			slog.Warn("[PINGCLAW MCP] wrong token kind", "kind", kind)
+			http.Error(w, "MCP requires an API key", http.StatusForbidden)
 			return
 		}
 
