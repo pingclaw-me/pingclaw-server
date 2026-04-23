@@ -1,52 +1,67 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Privacy — PingClaw</title>
-    <link rel="icon" type="image/png" sizes="any" href="/icon.png?v=7">
-    <link rel="shortcut icon" href="/favicon.ico?v=7">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Sans:ital,wght@0,300;0,400;0,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=32">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy — PingClaw</title>
+<meta name="description" content="PingClaw's privacy policy. What we store, what we don't, and how long.">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#B8472C">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="/pingclaw-site.css">
 </head>
 <body>
-    <main>
-        <nav class="pc-nav pc-nav-static">
-            <div class="pc-nav-inner">
-                <a href="/">
-                    <picture>
-                        <source srcset="/wordmark.png?v=1" media="(prefers-color-scheme: dark)">
-                        <img src="/wordmark-light.png?v=1" alt="PingClaw" class="pc-nav-wordmark">
-                    </picture>
-                </a>
-                <div class="pc-nav-spacer"></div>
-                <a class="pc-nav-link" href="/">Back</a>
-            </div>
-        </nav>
 
-        <div class="pc-container-narrow" style="padding-top: 64px; padding-bottom: 64px;">
-            <div class="pc-eyebrow">Privacy</div>
-            <h1 class="pc-h1" style="margin-bottom: 8px;">Privacy policy</h1>
-            <p class="pc-help" style="margin-bottom: 32px;">Last updated: {{.LastUpdated}}</p>
+<nav class="top">
+  <div class="container nav-inner">
+    <a href="/" class="logomark">
+      <span class="pin"></span>
+      pingclaw
+    </a>
+    <div class="nav-links">
+      <a href="/">‹ Back</a>
+    </div>
+  </div>
+</nav>
 
-            <div class="pc-prose">
-                {{.Content}}
-            </div>
-        </div>
-    </main>
+<div class="legal-wrap">
 
-    <footer class="pc-footer">
-        <p>Location context for AI</p>
-        <p style="margin-top: 8px;">© 2026 Christian Reimer</p>
-    </footer>
-    <script>
-    if (new URLSearchParams(location.search).has('embedded')) {
-        document.querySelector('.pc-nav')?.remove();
-        document.querySelector('.pc-footer')?.remove();
-    }
-    </script>
+  <div class="legal-eyebrow">Privacy</div>
+  <h1 class="legal-title">Privacy policy</h1>
+  <div class="legal-date">Last updated: {{.LastUpdated}}</div>
+
+  <div class="legal-prose">
+    {{.Content}}
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="container inner">
+    <span class="footer-tag">pingclaw · location context for any AI agent</span>
+    <div>
+      <a href="/privacypolicy">Privacy</a>
+      <a href="/termsofservice">Terms</a>
+      <a href="https://github.com/pingclaw-me">GitHub</a>
+      <span style="margin-left: 24px; color: var(--ink-faint);">© 2026 Christian Reimer</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+if (new URLSearchParams(location.search).has('embedded')) {
+    document.querySelector('nav.top')?.remove();
+    document.querySelector('footer.site-footer')?.remove();
+}
+</script>
+<script src="/pingclaw-site.js"></script>
+
 </body>
 </html>

@@ -228,11 +228,14 @@ func main() {
 		skip("OpenClaw tests", "PINGCLAW_TUNNEL_URL not set")
 	}
 
-	// === Phase 7: Token rotation ===
+	// === Phase 7: Integration activity tracking ===
+	run("Verify integration status endpoint", verifyIntegrationStatus)
+
+	// === Phase 8: Token rotation ===
 	run("Rotate API key (old key rejected)", verifyAPIKeyRotation)
 	run("Rotate pairing token (old token rejected)", verifyPairingTokenRotation)
 
-	// === Phase 8: Google Sign-In (optional, creates second user) ===
+	// === Phase 9: Google Sign-In (optional, creates second user) ===
 	promptUser("SIGN IN WITH GOOGLE (optional)",
 		"This tests Google Sign-In by creating a SEPARATE account.",
 		"",
@@ -268,13 +271,13 @@ func main() {
 		skip("Google Sign-In", "skipped by user")
 	}
 
-	// === Phase 9: Disable location ===
+	// === Phase 10: Disable location ===
 	promptUser("DISABLE LOCATION SHARING",
 		"1. In the app, tap the Location Sharing card to turn it OFF",
 	)
 	run("Verify location still cached after disable", verifyLocationStored)
 
-	// === Phase 10: Account deletion ===
+	// === Phase 11: Account deletion ===
 	promptUser("CONFIRM ACCOUNT DELETION",
 		"The next step will DELETE your Apple test account.",
 		"All data, tokens, and identities will be permanently removed.",
@@ -1111,6 +1114,28 @@ func verifyOpenClawReceived() error {
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("no openclaw payloads received after 10s")
+}
+
+// --- Integration activity ---
+
+func verifyIntegrationStatus() error {
+	resp, body, err := apiGet("/pingclaw/integrations/status")
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	m := parseJSON(body)
+	activity, ok := m["activity"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected activity map in response, got %v", m)
+	}
+	for kind, ts := range activity {
+		logf("   %s: %v\n", kind, ts)
+	}
+	logf("   Integration status endpoint works, %d types with activity\n", len(activity))
+	return nil
 }
 
 // --- Token rotation ---

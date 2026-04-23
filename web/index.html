@@ -1,366 +1,783 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PingClaw — Location context for AI</title>
-<link rel="icon" href="/favicon.ico?v=8" sizes="any">
-    <link rel="icon" type="image/png" sizes="any" href="/icon.png?v=8">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=8">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Sans:ital,wght@0,300;0,400;0,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=42">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PingClaw — Location context for any AI agent</title>
+<meta name="description" content="A quiet iOS and Android app that shares your location with the AI tools you already use — Claude Code, Cursor, OpenClaw, or anything that speaks MCP. Open source. Self-hostable. Location is never persisted.">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#B8472C">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="/pingclaw-site.css">
 </head>
 <body>
-    <main>
-        <!-- =================== Landing =================== -->
-        <section id="landing">
-            <div class="pc-hero-wrap">
-                <div class="pc-reveal pc-reveal-1" style="text-align: center;">
-                    <picture>
-                        <source srcset="/hero.png?v=1" media="(prefers-color-scheme: dark)">
-                        <img src="/hero-light.png?v=1" alt="PingClaw — Location context for AI" class="pc-hero-img">
-                    </picture>
-                </div>
-                <div class="pc-cta pc-reveal pc-reveal-3">
-                    <button class="pc-btn-primary" onclick="showSection('auth')">Sign in</button>
-                </div>
-            </div>
 
-            <section id="how" class="pc-section-compact">
-                <div class="pc-container">
-                    <div class="pc-eyebrow" style="text-align: center;">How it works</div>
-                    <div class="pc-grid pc-grid-3" style="margin-top: 24px;">
-                        <article class="pc-card">
-                            <div class="pc-step-num">Step 01</div>
-                            <h3 class="pc-card-title">Sign in</h3>
-                            <p class="pc-help" style="margin-top: 8px;">Sign in with Apple or Google on the app or website to create your account and get an API key.</p>
-                        </article>
-                        <article class="pc-card">
-                            <div class="pc-step-num">Step 02</div>
-                            <h3 class="pc-card-title">Install the app</h3>
-                            <p class="pc-help" style="margin-top: 8px;">Sign in on the app and enable location sharing. PingClaw runs in the background and shares your location when needed.</p>
-                        </article>
-                        <article class="pc-card">
-                            <div class="pc-step-num">Step 03</div>
-                            <h3 class="pc-card-title">Connect your agent</h3>
-                            <p class="pc-help" style="margin-top: 8px;">Add the configuration snippet to your agent. It can now answer questions about where you are.</p>
-                        </article>
-                    </div>
-                </div>
-            </section>
+<main>
 
-            <section class="pc-section-compact">
-                <div class="pc-container pc-inuse-row" style="display: flex; align-items: center; gap: 48px;">
-                    <div class="pc-inuse-phone" style="flex-shrink: 0;">
-                        <picture>
-                            <source srcset="/phone-dark.png?v=1" media="(prefers-color-scheme: dark)">
-                            <img src="/phone-light.png?v=1" alt="PingClaw app showing location sharing enabled" style="width: 280px; height: auto; display: block;">
-                        </picture>
-                    </div>
-                    <div style="flex: 1; min-width: 0;">
-                        <div class="pc-eyebrow">In use</div>
-                        <h2 class="pc-h2">A quiet utility, not an app you stare at.</h2>
-                        <p class="pc-lead" style="margin-top: 16px;">PingClaw runs in the background. When your AI assistant needs your location, it gets the coordinates — accurate, current, scoped to you. No history, no map, no notifications.</p>
+<!-- ============ LANDING (logged out) ============ -->
+<div id="landing">
 
-                        <div class="pc-location-readout" style="margin-top: 32px;">
-                            <div class="pc-location-label">Live readout</div>
-                            <div class="pc-location-coords">
-                                <span>27.1396° S</span>
-                                <span class="pc-location-sep"> · </span>
-                                <span>109.4270° W</span>
-                            </div>
-                            <div class="pc-location-accuracy">± 8m · Updated just now</div>
-                            <div style="display:flex;justify-content:flex-end;margin-top:12px;">
-                                <a href="https://www.google.com/maps?q=-27.1396,-109.4270" target="_blank" class="pc-btn-ghost pc-btn-sm">Show map</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
+<nav class="top">
+  <div class="container nav-inner">
+    <a href="/" class="logomark">
+      <span class="pin"></span>
+      pingclaw
+    </a>
+    <div class="nav-links">
+      <a href="#agents">Agents</a>
+      <a href="#how">How it works</a>
+      <a href="#self-host">Self-host</a>
+      <a href="https://github.com/pingclaw-me">GitHub</a>
+      <a href="#signin" class="btn-nav landing-only">Sign in</a>
+    </div>
+  </div>
+</nav>
 
-            <section class="pc-section-compact">
-                <div class="pc-container-narrow">
-                    <div class="pc-eyebrow">Any agent</div>
-                    <h2 class="pc-h2">Works with whatever agent you already run.</h2>
-                    <p class="pc-lead" style="margin-top: 16px;">PingClaw is a location source, not an agent companion. Any agent that speaks MCP or accepts a webhook can consume your location — Claude Code, Claude Desktop, Cursor, Windsurf, Zed, VS Code, or anything you've built yourself. Configuration snippets for all of them are one tap away in the dashboard.</p>
-                </div>
-            </section>
+<!-- HERO -->
+<section class="hero">
+  <div class="container">
+    <div class="tag-row reveal reveal-1">
+      <span class="dash"></span>
+      <span class="eyebrow">Ping·claw · v1.0 · iOS + Android</span>
+    </div>
 
-            <section class="pc-section-compact">
-                <div class="pc-container-narrow">
-                    <div class="pc-eyebrow">OpenClaw</div>
-                    <h2 class="pc-h2">Native push for OpenClaw users.</h2>
-                    <p class="pc-lead" style="margin-top: 16px;">For <a href="https://openclaw.ai">OpenClaw</a>, PingClaw goes a step further and pushes each location update directly to your gateway. Your agent gets your position as context automatically — no polling, no manual queries.</p>
-                    <p class="pc-help" style="margin-top: 16px;">Install the <a href="https://github.com/pingclaw-me/openclaw-skill">PingClaw skill</a> to let your agent fetch on demand, or configure gateway push delivery from the dashboard for real-time updates.</p>
-                </div>
-            </section>
+    <h1 class="reveal reveal-2">
+      Location context<br>
+      for <em>any</em> AI agent.
+    </h1>
 
-            <section class="pc-section-compact">
-                <div class="pc-container-narrow">
-                    <div class="pc-eyebrow">Self-hosting</div>
-                    <h2 class="pc-h2">Run your own server.</h2>
-                    <p class="pc-lead" style="margin-top: 16px;">PingClaw is open source and self-hostable. One binary, no dependencies — SQLite, in-memory cache, no Redis, no Postgres. Your location never leaves your own machine.</p>
-                    <div class="pc-code-block" style="margin-top: 24px;">go install github.com/pingclaw-me/pingclaw-server/cmd/server@latest
-server --local</div>
-                    <p class="pc-help" style="margin-top: 16px;">The app has a <strong>Self-Hosted Server</strong> option on the sign-in screen. Enter your server URL and the pairing token — no Apple or Google account needed. See the <a href="https://github.com/pingclaw-me/pingclaw-server">server repo</a> for details.</p>
-                </div>
-            </section>
-        </section>
+    <p class="lede reveal reveal-3">
+      A quiet iOS and Android app that shares your location with the AI tools
+      you already use — Claude Code, Cursor, OpenClaw, or anything that
+      speaks MCP. Open source. Self-hostable. Your location is never persisted.
+    </p>
 
-        <!-- =================== Auth =================== -->
-        <section id="auth" hidden>
-            <div class="pc-container-narrow" style="max-width: 400px; padding-top: 64px; padding-bottom: 64px;">
-                <div class="pc-eyebrow">Sign in</div>
-                <h2 class="pc-h2" style="margin-bottom: 24px;">Sign in from your phone</h2>
+    <div class="trust-row reveal reveal-4">
+      <span><span class="trust-dot"></span> Phone-first sign-in · no SMS</span>
+      <span><span class="trust-dot"></span> 24-hour TTL, Redis only</span>
+      <span><span class="trust-dot"></span> MIT licensed</span>
+    </div>
 
-                <div class="pc-card" style="display: flex; flex-direction: column; gap: 12px;">
-                    <p class="pc-help">Open the PingClaw app on your phone, go to Settings, and generate a sign-in code. Enter it below.</p>
-                    <div class="pc-token-row">
-                        <input type="text" id="web-code-input" placeholder="Enter code" maxlength="8"
-                               style="text-transform: uppercase; font-family: var(--pc-font-mono); letter-spacing: 0.1em;">
-                        <button class="pc-btn-primary pc-btn-sm" onclick="webLogin()">Sign in</button>
-                    </div>
-                    <p id="web-code-error" class="pc-help pc-help-error" style="margin-top: 4px;" hidden></p>
-                </div>
+    <div class="cta-row reveal reveal-4">
+      <a href="#" class="btn btn-primary">Download for iOS</a>
+      <a href="#" class="btn btn-primary">Download for Android</a>
+      <a href="https://github.com/pingclaw-me" class="btn btn-secondary">GitHub</a>
+    </div>
 
-                <p style="margin-top: 24px;">
-                    <a href="#" onclick="showSection('landing'); return false;">← Back</a>
-                </p>
-            </div>
-        </section>
+    <!-- live coordinate readout -->
+    <div class="readout-card reveal reveal-5">
+      <div class="readout-head">
+        <span>loc · current</span>
+        <span class="status-live"><span class="pulse"></span> live</span>
+      </div>
+      <div class="readout-body">
+        <div class="coords">
+          <span>39.9043° N</span>
+          <span>−75.3505° W</span>
+          <span class="cursor"></span>
+        </div>
+        <div class="meta-row">
+          <span><b>acc</b> ± 7m</span>
+          <span><b>src</b> gps</span>
+          <span><b>age</b> 4s</span>
+          <span><b>ttl</b> 24h</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-        <!-- =================== Dashboard =================== -->
-        <section id="dashboard" hidden>
-            <nav class="pc-nav pc-nav-static">
-                <div class="pc-nav-inner">
-                    <a href="/">
-                        <picture>
-                            <source srcset="/wordmark.png?v=1" media="(prefers-color-scheme: dark)">
-                            <img src="/wordmark-light.png?v=1" alt="PingClaw" class="pc-nav-wordmark">
-                        </picture>
-                    </a>
-                    <div class="pc-nav-spacer"></div>
-                    <button class="pc-btn-ghost pc-btn-sm header-btn" onclick="handleHeaderBtn()">Sign in</button>
-                </div>
-            </nav>
-
-            <div class="pc-container" style="padding-top: 32px; padding-bottom: 64px;">
-
-                <!-- Location -->
-                <div class="pc-eyebrow">Location</div>
-                <div class="pc-card pc-card-flat">
-                    <div id="location-status" class="pc-location-empty">Locating…</div>
-                </div>
-
-                <!-- API Key -->
-                <div class="pc-eyebrow pc-dash-section">API key</div>
-                <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">Used by your AI agent. Shown only at creation and rotation — the server stores only a hash. Rotating breaks any agent using the previous key.</p>
-
-                    <div id="api-key-empty" style="display: none;">
-                        <button class="pc-btn-primary pc-btn-sm" onclick="rotateAPIKey()">Generate API key</button>
-                    </div>
-
-                    <div id="api-key-input-row" class="pc-token-row">
-                        <input type="text" id="api-key-display" readonly>
-                    </div>
-                    <div id="api-key-actions" class="pc-token-row" style="margin-top: 8px;">
-                        <button id="api-key-copy" class="pc-btn-ghost pc-btn-sm" onclick="copyToken('api')">Copy</button>
-                        <button id="api-key-rotate" class="pc-btn-danger pc-btn-sm" onclick="rotateAPIKey()">Rotate</button>
-                    </div>
-                </div>
-
-                <!-- Setup ChatGPT -->
-                <div class="pc-eyebrow pc-dash-section">ChatGPT</div>
-                <div class="pc-card">
-                    <div id="setup-chatgpt-content" class="pc-prose"></div>
-                    <a href="https://chatgpt.com/g/g-69e2d7fe797c8191ab8c0356f375daca-pingclaw"
-                       target="_blank" rel="noopener"
-                       class="pc-btn-primary pc-btn-block"
-                       style="text-align: center; text-decoration: none; margin-top: 16px;">
-                        Open PingClaw GPT
-                    </a>
-                </div>
-
-                <!-- MCP Config -->
-                <div class="pc-eyebrow pc-dash-section">MCP config</div>
-                <div class="pc-card">
-                    <div id="mcp-target-picker" style="display: none; margin-bottom: 12px;">
-                        <label class="pc-label" for="mcp-target-select">Target client</label>
-                        <select id="mcp-target-select" class="pc-input" style="width: auto;" onchange="setMcpTarget(this.value)">
-                            <option value="code">Claude Code</option>
-                            <option value="desktop">Claude Desktop</option>
-                            <option value="vscode">VS Code</option>
-                            <option value="cursor">Cursor</option>
-                            <option value="windsurf">Windsurf</option>
-                            <option value="zed">Zed</option>
-                        </select>
-                    </div>
-                    <p id="mcp-config-intro" class="pc-help" style="margin-bottom: 12px;"></p>
-                    <p id="mcp-config-hint" class="pc-help" style="margin-bottom: 12px;"></p>
-                    <pre id="claude-config" class="pc-code-block"></pre>
-                    <button id="mcp-config-copy" class="pc-btn-ghost pc-btn-sm" onclick="copyConfig()">Copy config</button>
-                </div>
-
-                <!-- OpenClaw Gateway -->
-                <div class="pc-eyebrow pc-dash-section">OpenClaw gateway</div>
-
-                <!-- OpenClaw: setup form (hidden when a destination is active) -->
-                <div id="openclaw-setup" class="pc-card">
-                    <div id="setup-openclaw-content" class="pc-prose" style="margin-bottom: 16px;"></div>
-
-                    <div style="display: flex; flex-direction: column; gap: 12px;">
-                        <div>
-                            <label class="pc-label" for="openclaw-url-input">Gateway URL</label>
-                            <input type="text" id="openclaw-url-input" placeholder="https://my-gateway.tailnet.ts.net:18789">
-                            <p class="pc-help" style="margin-top: 4px;">The URL of your OpenClaw gateway. Must be reachable from the internet — use Tailscale Funnel or a public deployment.</p>
-                        </div>
-                        <div>
-                            <label class="pc-label" for="openclaw-token-input">Hook token</label>
-                            <input type="text" id="openclaw-token-input" placeholder="your hooks.token value">
-                            <p class="pc-help" style="margin-top: 4px;">The <code>hooks.token</code> value from your <code>openclaw.json</code>.</p>
-                        </div>
-                        <div>
-                            <label class="pc-label" for="openclaw-path-input">Hook path</label>
-                            <input type="text" id="openclaw-path-input" placeholder="pingclaw" value="pingclaw">
-                            <p class="pc-help" style="margin-top: 4px;">Updates are sent to <code>/hooks/{path}</code> on your gateway.</p>
-                        </div>
-                        <div>
-                            <label class="pc-label" for="openclaw-action-select">Action</label>
-                            <select id="openclaw-action-select" class="pc-input" style="width: auto;">
-                                <option value="wake" selected>Wake (recommended)</option>
-                                <option value="agent">Agent (uses tokens)</option>
-                            </select>
-                            <p class="pc-help" style="margin-top: 4px;">Wake injects location as context silently. Agent triggers a full agent run on every update.</p>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <button class="pc-btn-primary pc-btn-sm" onclick="registerOpenClaw()">Connect</button>
-                            <span id="openclaw-register-status" class="pc-help" style="display: none;"></span>
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--pc-border);">
-                        <p class="pc-help" style="margin-bottom: 8px;">Add to your <code>~/.openclaw/openclaw.json</code>:</p>
-                        <pre id="openclaw-config-snippet" class="pc-code-block"></pre>
-                        <button class="pc-btn-ghost pc-btn-sm" onclick="copyOpenClawConfig()">Copy config</button>
-                    </div>
-                </div>
-
-                <!-- OpenClaw: active config (hidden when no destination is registered) -->
-                <div id="openclaw-configured" class="pc-card" style="display: none;">
-                    <div style="margin-bottom: 16px;">
-                        <label class="pc-label">Gateway URL</label>
-                        <div class="pc-token-row">
-                            <input type="text" id="openclaw-url-display" readonly>
-                        </div>
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label class="pc-label">Hook path</label>
-                        <div class="pc-token-row">
-                            <input type="text" id="openclaw-path-display" readonly>
-                        </div>
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label class="pc-label">Action</label>
-                        <div class="pc-token-row">
-                            <input type="text" id="openclaw-action-display" readonly>
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                        <button class="pc-btn-primary pc-btn-sm" onclick="sendOpenClawLocation()">Send location now</button>
-                        <button class="pc-btn-ghost pc-btn-sm" onclick="testOpenClaw()">Test connection</button>
-                        <button class="pc-btn-danger pc-btn-sm" onclick="deleteOpenClaw()">Remove</button>
-                    </div>
-                    <div id="openclaw-test-status" class="pc-help" style="margin-bottom: 8px; display: none;"></div>
-                </div>
-
-                <!-- Webhook -->
-                <div class="pc-eyebrow pc-dash-section">Webhook</div>
-
-                <!-- Webhook: setup instructions (hidden when a webhook is active) -->
-                <div id="webhook-setup" class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">PingClaw POSTs each location update to a URL you control, with an <code>Authorization: Bearer &lt;secret&gt;</code> header your receiver can verify.</p>
-
-                    <div class="pc-prose">
-                        <h4 class="pc-step-label">1. Export your API Key</h4>
-                        <p>Generate (or rotate) your API Key above, copy it, then set it in your shell:</p>
-                        <div class="pc-token-row" style="margin-bottom: 16px;">
-                            <input type="text" id="webhook-token-example" readonly value="export PINGCLAW_TOKEN=ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
-                        </div>
-
-                        <h4 class="pc-step-label">2. Pick a webhook secret</h4>
-                        <p>Any string works. PingClaw will replay it on every outbound POST so your receiver can verify it came from PingClaw:</p>
-                        <div class="pc-token-row" style="margin-bottom: 16px;">
-                            <input type="text" readonly value="export WEBHOOK_SECRET=$(openssl rand -hex 16)">
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
-                        </div>
-
-                        <h4 class="pc-step-label">3. Register the webhook</h4>
-                        <p>Replace the URL below with your receiver, then run:</p>
-                        <div class="pc-token-row">
-                            <pre id="webhook-help-curl" class="pc-code-block" style="flex: 1; min-width: 0; margin: 0;"></pre>
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookCurl(this)">Copy</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Webhook: active config (hidden when no webhook is registered) -->
-                <div id="webhook-configured" class="pc-card" style="display: none; margin-top: 12px;">
-                    <div style="margin-bottom: 16px;">
-                        <label class="pc-label">URL</label>
-                        <div class="pc-token-row">
-                            <input type="text" id="webhook-url-display" readonly>
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('url')">Copy</button>
-                        </div>
-                    </div>
-                    <div style="margin-bottom: 16px;">
-                        <label class="pc-label">Secret</label>
-                        <div class="pc-token-row">
-                            <input type="text" id="webhook-secret-display" readonly>
-                            <button class="pc-btn-ghost pc-btn-sm" onclick="copyWebhookField('secret')">Copy</button>
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                        <button class="pc-btn-ghost pc-btn-sm" onclick="testWebhook()">Send test</button>
-                        <button class="pc-btn-danger pc-btn-sm" onclick="deleteWebhook()">Remove webhook</button>
-                    </div>
-                    <div id="webhook-test-status" class="pc-help" style="margin-bottom: 8px; display: none;"></div>
-                </div>
-
-                <!-- Your Data -->
-                <div class="pc-eyebrow pc-dash-section">Your data</div>
-                <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">View every record the server stores about your account.</p>
-                    <button id="my-data-toggle" class="pc-btn-ghost pc-btn-sm" onclick="viewMyData()">View my data</button>
-                    <div id="my-data-wrap" style="display: none; margin-top: 16px;">
-                        <pre id="my-data-display" class="pc-code-block" style="max-height: 480px; overflow: auto;"></pre>
-                    </div>
-                </div>
-
-                <!-- Delete Account -->
-                <div class="pc-eyebrow pc-dash-section pc-eyebrow-danger">Delete account</div>
-                <div class="pc-card">
-                    <p class="pc-help" style="margin-bottom: 16px;">Permanently delete your account and all stored data. This cannot be undone.</p>
-                    <button class="pc-btn-danger pc-btn-sm" onclick="deleteAccount()">Delete account</button>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="pc-footer">
-        <p>
-            Location context for AI &nbsp;·&nbsp;
-            <a href="/privacypolicy">Privacy</a> &nbsp;·&nbsp;
-            <a href="/termsofservice">Terms</a>
+<!-- ANY AGENT -->
+<section id="agents">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">§ 01 / AGENTS</div>
+      <div>
+        <h2 class="display">Works with the agent <em>you already run.</em></h2>
+        <p class="lede">
+          PingClaw is a location source, not an agent companion. Any agent
+          that speaks MCP or accepts a webhook can consume your location —
+          configuration snippets for all of them are one tap away in the dashboard.
         </p>
-        <p style="margin-top: 8px;">© 2026 Christian Reimer</p>
-    </footer>
+      </div>
+    </div>
 
-    <!-- Social sign-in SDKs (loaded async, only used on the auth page) -->
+    <div class="client-grid">
+      <div class="client-cell">
+        <span class="c-mode">GPT · One-tap</span>
+        <span class="c-name">ChatGPT</span>
+        <span class="c-note">Open the PingClaw GPT. The easiest path in.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">MCP · Pull</span>
+        <span class="c-name">Claude Code</span>
+        <span class="c-note">Ask "where am I" — gets coords in the loop.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">MCP · Pull</span>
+        <span class="c-name">Claude Desktop</span>
+        <span class="c-note">Via <span class="mono">mcp-remote</span>. Paste the snippet, done.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">MCP · Pull</span>
+        <span class="c-name">Cursor</span>
+        <span class="c-note">Add to MCP settings. Works in chat and agent mode.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">MCP · Pull</span>
+        <span class="c-name">Zed</span>
+        <span class="c-note">Context servers. One line in settings.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">MCP · Pull</span>
+        <span class="c-name">VS Code</span>
+        <span class="c-note">MCP extension support. Shared with Copilot.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">Push · Native</span>
+        <span class="c-name">OpenClaw</span>
+        <span class="c-note">Direct gateway delivery. No polling needed.</span>
+      </div>
+      <div class="client-cell">
+        <span class="c-mode">Webhook · Push</span>
+        <span class="c-name">Anything else</span>
+        <span class="c-note">POST with a bearer secret. Roll your own agent.</span>
+      </div>
+    </div>
 
-    <script src="/app.js?v=43"></script>
+    <div class="snippet">
+      <div class="snippet-head">
+        <span>~/.claude/mcp.json</span>
+        <button class="snippet-copy">Copy</button>
+      </div>
+      <div class="snippet-body"><span class="com">// one line, and your agent knows where you are</span>
+{
+  <span class="key">"mcpServers"</span>: {
+    <span class="key">"pingclaw"</span>: {
+      <span class="key">"url"</span>: <span class="str">"https://pingclaw.me/pingclaw/mcp"</span>,
+      <span class="key">"headers"</span>: { <span class="key">"Authorization"</span>: <span class="str">"Bearer ak_…"</span> }
+    }
+  }
+}</div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">§ 02 / SETUP</div>
+      <div>
+        <h2 class="display">Three steps. <em>The app comes first.</em></h2>
+        <p class="lede">
+          Install the app, sign in on the phone, then open the web dashboard
+          with a code the app hands you. No phone number, no SMS, no account
+          to recover.
+        </p>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">STEP 01</div>
+        <h3>Install the app</h3>
+        <p>iOS or Android. Sign in with Apple or Google inside the app, grant background location, and you're done with the phone.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 02</div>
+        <h3>Open the dashboard</h3>
+        <p>From the app, generate a one-time code and <a href="#signin">paste it below</a>. That's how the site knows it's you — no separate login.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 03</div>
+        <h3>Connect your agent</h3>
+        <p>In the dashboard, mint an API key and copy a one-line config for your client. Or register a webhook for anything else.
+          <span class="clients">claude-code · claude-desktop · cursor<br>zed · vs-code · openclaw</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SIGN IN -->
+<section class="signin-section" id="signin">
+  <div class="container">
+    <div class="signin-layout">
+      <div class="signin-copy">
+        <div class="eyebrow" style="margin-bottom: 16px;">Sign in</div>
+        <h2 class="display">Paste the code<br>from your <em>phone.</em></h2>
+        <p>
+          Open the PingClaw app, go to Settings, and generate a sign-in code.
+          It's valid for five minutes and works once.
+        </p>
+      </div>
+      <div class="signin-form-wrap">
+        <div class="signin-card">
+          <label class="label" for="signin-code">Pairing code</label>
+          <input type="text" id="signin-code" class="signin-input mono"
+                 placeholder="K7QP · 4M3X" maxlength="11" autocomplete="off"
+                 spellcheck="false" autocapitalize="characters">
+          <p class="signin-hint" id="signin-hint">8 characters, letters and numbers. The middle dot is added automatically.</p>
+          <button id="signin-submit" class="btn btn-primary" style="width: 100%; margin-top: 16px;" disabled>Sign in</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- QUIET UTILITY -->
+<section>
+  <div class="container">
+    <div class="quiet-layout">
+      <div class="quiet-text">
+        <div class="eyebrow" style="margin-bottom: 24px;">§ 03 / IN USE</div>
+        <h2>A <em>quiet utility,</em><br>not an app you stare at.</h2>
+        <p>
+          PingClaw runs in the background. When your AI assistant needs your
+          location, it gets the coordinates — accurate, current, scoped to the
+          one API key that asked.
+        </p>
+        <p>
+          Coordinates only. Current only. Nothing is ever written to Postgres.
+        </p>
+      </div>
+
+      <div class="ledger">
+        <div class="ledger-item">
+          <span class="k">Coordinates</span>
+          <span class="v yes">lat · lon · accuracy</span>
+        </div>
+        <div class="ledger-item">
+          <span class="k">Cache lifetime</span>
+          <span class="v">24h · Redis only</span>
+        </div>
+        <div class="ledger-item">
+          <span class="k">Persisted history</span>
+          <span class="v no">none</span>
+        </div>
+        <div class="ledger-item">
+          <span class="k">Map rendered</span>
+          <span class="v no">none</span>
+        </div>
+        <div class="ledger-item">
+          <span class="k">Notifications</span>
+          <span class="v no">none</span>
+        </div>
+        <div class="ledger-item">
+          <span class="k">Scope</span>
+          <span class="v yes">one key, one user</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- OPENCLAW -->
+<section>
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">§ 04 / OPENCLAW</div>
+      <div>
+        <h2 class="display">Native push for <em>OpenClaw</em> users.</h2>
+        <p class="lede">
+          For OpenClaw, PingClaw goes a step further and pushes each location update
+          directly to your gateway. Your agent gets your position as context
+          automatically — no polling, no manual queries.
+        </p>
+      </div>
+    </div>
+
+    <div class="openclaw-wrap">
+      <div class="openclaw-copy">
+        <h3>Two ways in.</h3>
+        <p>
+          Install the <a href="https://github.com/pingclaw-me/openclaw-skill">PingClaw skill</a> to let your agent fetch your
+          location on demand, or configure gateway push delivery from the
+          dashboard for real-time updates.
+        </p>
+        <p>
+          Push mode supports two actions: <span class="mono">Wake</span>, which
+          injects location as context silently, and <span class="mono">Agent</span>,
+          which triggers a full agent run on every update.
+        </p>
+      </div>
+      <div class="openclaw-visual">
+        <div class="flow-label">push flow</div>
+        <div class="flow-line">
+          <span class="box">phone</span>
+          <span class="arrow-h"></span>
+          <span class="box">pingclaw</span>
+          <span class="arrow-h"></span>
+          <span class="box">gateway</span>
+        </div>
+        <div class="flow-label">pull flow (skill)</div>
+        <div class="flow-line">
+          <span class="box">agent</span>
+          <span class="arrow-h"></span>
+          <span class="box">skill</span>
+          <span class="arrow-h"></span>
+          <span class="box">pingclaw</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SELF HOSTING -->
+<section id="self-host">
+  <div class="container">
+    <div class="self-host-layout">
+      <div class="self-host-text">
+        <div class="eyebrow" style="margin-bottom: 24px;">§ 05 / SELF-HOSTING</div>
+        <h2>Run your <em>own</em> server.</h2>
+        <p>
+          PingClaw is open source and self-hostable. One binary, no dependencies —
+          SQLite, in-memory cache. No Redis, no Postgres, no outbound calls you
+          didn't configure yourself.
+        </p>
+        <p>
+          Install the app as usual. On the sign-in screen, pick <b>Self-Hosted
+          Server</b>, enter your server URL, and paste the pairing token your
+          server printed on first run. No Apple or Google account needed — your
+          location never leaves the machine you chose.
+        </p>
+        <p>
+          See the <a href="https://github.com/pingclaw-me/pingclaw-server">server repo</a> for details.
+        </p>
+      </div>
+
+      <div class="snippet" style="margin-top: 0;">
+        <div class="snippet-head">
+          <span>$ terminal</span>
+          <button class="snippet-copy">Copy</button>
+        </div>
+        <div class="snippet-body"><span class="com"># install</span>
+<span class="str">go install</span> github.com/pingclaw-me/pingclaw-server/cmd/server@latest
+
+<span class="com"># run — your location never leaves this machine</span>
+<span class="str">server --local</span>
+
+<span class="com"># listening on :8080</span>
+<span class="com"># dashboard at http://localhost:8080</span>
+<span class="com"># pairing token printed here — paste into the app</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final-cta" id="download">
+  <div class="container">
+    <h2 class="display">Give your agent <em>a sense of place.</em></h2>
+    <p>
+      Install the app, pair your agent, and the next thing it answers about
+      "near me" will actually mean something.
+    </p>
+    <div class="cta-row">
+      <a href="#" class="btn btn-primary">Download for iOS</a>
+      <a href="#" class="btn btn-primary">Download for Android</a>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="container inner">
+    <span class="footer-tag">pingclaw · location context for any AI agent</span>
+    <div>
+      <a href="/privacypolicy">Privacy</a>
+      <a href="/termsofservice">Terms</a>
+      <a href="https://github.com/pingclaw-me">GitHub</a>
+      <span style="margin-left: 24px; color: var(--ink-faint);">© 2026 Christian Reimer</span>
+    </div>
+  </div>
+</footer>
+
+</div><!-- /#landing -->
+
+
+<!-- ============ DASHBOARD (logged in) ============ -->
+<div id="dashboard" hidden>
+
+<nav class="top">
+  <div class="container-wide nav-inner">
+    <a href="/" class="logomark">
+      <span class="pin"></span>
+      pingclaw
+    </a>
+    <div class="nav-links">
+      <span class="nav-user"><span class="dot"></span><span id="nav-user-id"></span></span>
+      <button class="btn-nav header-btn" onclick="handleHeaderBtn()">Sign out</button>
+    </div>
+  </div>
+</nav>
+
+<div class="dashboard-shell">
+
+  <aside class="rail">
+    <div class="rail-title">§ sections</div>
+    <a href="#location" class="rail-item active">
+      <span class="s-dot configured"></span>Location
+    </a>
+    <a href="#api-key" class="rail-item">
+      <span class="s-dot pending"></span>API key
+    </a>
+    <a href="#chatgpt" class="rail-item">
+      <span class="s-dot pending"></span>ChatGPT
+    </a>
+    <a href="#mcp" class="rail-item">
+      <span class="s-dot pending"></span>MCP clients
+    </a>
+    <a href="#openclaw" class="rail-item">
+      <span class="s-dot pending"></span>OpenClaw
+    </a>
+    <a href="#webhook" class="rail-item">
+      <span class="s-dot pending"></span>Webhook
+    </a>
+    <a href="#data" class="rail-item">
+      <span class="s-dot configured"></span>Your data
+    </a>
+    <a href="#delete" class="rail-item">
+      <span class="s-dot danger"></span>Delete account
+    </a>
+  </aside>
+
+  <div class="dashboard-content">
+    <div class="page-head">
+      <div class="eyebrow" style="margin-bottom: 10px;">Dashboard · signed in</div>
+      <h1 class="page-title">Your <em>configuration.</em></h1>
+    </div>
+
+    <!-- Location -->
+    <section class="dash-section" id="location">
+      <div class="dash-section-head">
+        <h2>Location</h2>
+        <span class="badge configured"><span class="dot"></span>Live</span>
+      </div>
+      <div id="location-status">
+        <div class="card location-readout">
+          <div class="location-head">
+            <span>loc · current</span>
+            <span class="status-live"><span class="pulse"></span> live</span>
+          </div>
+          <div class="location-body">
+            <div class="location-coords">Locating…</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Key -->
+    <section class="dash-section" id="api-key">
+      <div class="dash-section-head">
+        <h2>API key</h2>
+        <span class="badge configured"><span class="dot"></span>Active</span>
+      </div>
+      <p class="section-intro">
+        Used by your AI agent. Shown only at creation and rotation — the server stores only a hash. Rotating breaks any agent using the previous key.
+      </p>
+      <div class="card">
+        <div id="api-key-empty" style="display: none;">
+          <button class="btn btn-primary btn-sm" onclick="rotateAPIKey()">Generate API key</button>
+        </div>
+
+        <div id="api-key-input-row" class="token-row">
+          <input type="text" id="api-key-display" class="token-input mono" readonly>
+        </div>
+        <div id="api-key-actions" class="btn-row" style="margin-top: 12px;">
+          <button id="api-key-copy" class="btn btn-secondary btn-sm" onclick="copyToken('api')">Copy</button>
+          <button id="api-key-rotate" class="btn btn-danger btn-sm" onclick="rotateAPIKey()">Rotate</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ChatGPT -->
+    <section class="dash-section" id="chatgpt">
+      <div class="dash-section-head">
+        <h2>ChatGPT</h2>
+        <span class="badge pending"><span class="dot"></span>Not connected</span>
+      </div>
+      <p class="section-intro">
+        The simplest way to use PingClaw. Open the PingClaw GPT once — ChatGPT will ask you to connect your PingClaw account. After that, just use ChatGPT normally.
+      </p>
+      <div class="card">
+        <div id="setup-chatgpt-content" class="help" style="margin-bottom: 14px;"></div>
+        <p class="help" style="margin-bottom: 14px;">
+          Once connected, ask ChatGPT anything location-aware — <em style="color: var(--ink); font-style: italic;">Where am I?</em>, <em style="color: var(--ink); font-style: italic;">What's near me?</em>, <em style="color: var(--ink); font-style: italic;">How far am I from the office?</em> — and it will check your live location automatically.
+        </p>
+        <a href="https://chatgpt.com/g/g-69e2d7fe797c8191ab8c0356f375daca-pingclaw" target="_blank" class="btn btn-primary btn-sm" style="text-decoration: none;">Open PingClaw GPT ↗︎</a>
+      </div>
+    </section>
+
+    <!-- MCP Clients -->
+    <section class="dash-section" id="mcp">
+      <div class="dash-section-head">
+        <h2>MCP clients</h2>
+        <span class="badge pending"><span class="dot"></span>Any agent that speaks MCP</span>
+      </div>
+      <p class="section-intro">
+        Drop the snippet into your client's MCP config. Works with Claude Code, Claude Desktop, Cursor, Zed, and VS Code.
+      </p>
+      <div class="card">
+        <div id="mcp-target-picker" style="display: none; margin-bottom: 16px;">
+          <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-end;">
+            <div>
+              <label class="label">Target client</label>
+              <div class="select-wrap">
+                <select id="mcp-target-select" class="select" onchange="setMcpTarget(this.value)">
+                  <option value="code">Claude Code</option>
+                  <option value="desktop">Claude Desktop</option>
+                  <option value="vscode">VS Code</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="zed">Zed</option>
+                </select>
+              </div>
+            </div>
+            <p id="mcp-config-intro" class="help" style="flex: 1; min-width: 200px;"></p>
+          </div>
+        </div>
+        <p id="mcp-config-hint" class="help" style="margin-bottom: 12px;"></p>
+        <pre id="claude-config" class="code-block"></pre>
+        <div class="btn-row" style="margin-top: 12px;">
+          <button id="mcp-config-copy" class="btn btn-secondary btn-sm" onclick="copyConfig()">Copy config</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- OpenClaw Gateway -->
+    <section class="dash-section" id="openclaw">
+      <div class="dash-section-head">
+        <h2>OpenClaw gateway</h2>
+        <span class="badge pending"><span class="dot"></span>Not connected</span>
+      </div>
+      <p class="section-intro">
+        Push your GPS position directly to your OpenClaw gateway every time your phone reports a new location. No polling, no manual queries.
+      </p>
+
+      <!-- OpenClaw: setup form (hidden when a destination is active) -->
+      <div id="openclaw-setup" class="card">
+        <div class="prose-wrap">
+          <div class="prose-toggle" onclick="toggleProse(this)">
+            <span>Full setup guide (4 steps)</span>
+            <span class="chev">›</span>
+          </div>
+          <div class="prose-body">
+            <div id="setup-openclaw-content"></div>
+            <h3>1. Enable hooks on your gateway</h3>
+            <p>Add to your <code>~/.openclaw/openclaw.json</code> and restart the gateway:</p>
+            <pre><code>{
+  "hooks": {
+    "enabled": true,
+    "token": "pick-a-strong-random-secret",
+    "path": "/hooks"
+  }
+}</code></pre>
+            <p>Generate a good token with <code>openssl rand -hex 24</code>.</p>
+            <h3>2. Make your gateway reachable</h3>
+            <p>PingClaw's server needs to POST to your gateway over the internet:</p>
+            <ul>
+              <li><b>Tailscale Funnel</b> — <code>tailscale funnel 18789</code></li>
+              <li><b>ngrok</b> — <code>ngrok http 18789</code></li>
+              <li><b>Cloudflare Tunnel</b></li>
+              <li><b>VPS with a public IP</b></li>
+            </ul>
+            <h3>3. Connect PingClaw</h3>
+            <p>Enter your gateway URL and token in the form below. PingClaw will send a test message before saving.</p>
+            <h3>4. Verify</h3>
+            <p>Check your OpenClaw session for the test message. Then move around — your agent has your location as context from then on.</p>
+            <h3>Wake vs Agent mode</h3>
+            <p>In <b>wake</b> mode (default), location is injected as context silently — no tokens, no reply triggered. Your next location-aware question just works. <b>Agent</b> mode triggers a full agent run on every update. Use for standing instructions like "remind me when I'm near a pharmacy." Costs tokens per update.</p>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="openclaw-url-input">Gateway URL</label>
+          <input type="text" id="openclaw-url-input" class="field-input" placeholder="https://my-gateway.tailnet.ts.net:18789">
+          <p class="input-hint">Must be reachable from the internet — use Tailscale Funnel or a public deployment.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="openclaw-token-input">Hook token</label>
+          <input type="text" id="openclaw-token-input" class="field-input" placeholder="your hooks.token value">
+          <p class="input-hint">The <code>hooks.token</code> value from your <code>openclaw.json</code>.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="openclaw-path-input">Hook path</label>
+          <input type="text" id="openclaw-path-input" class="field-input" value="pingclaw">
+          <p class="input-hint">Updates are sent to <code>/hooks/{path}</code> on your gateway.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="openclaw-action-select">Action</label>
+          <div class="select-wrap">
+            <select id="openclaw-action-select" class="select">
+              <option value="wake">Wake (recommended)</option>
+              <option value="agent">Agent (uses tokens)</option>
+            </select>
+          </div>
+          <p class="input-hint">Wake injects location as context silently. Agent triggers a full agent run on every update.</p>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary btn-sm" onclick="registerOpenClaw()">Connect</button>
+          <span id="openclaw-register-status" class="help" style="display: none;"></span>
+        </div>
+
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dotted var(--rule);">
+          <p class="help" style="margin-bottom: 8px;">Add to your <code>~/.openclaw/openclaw.json</code>:</p>
+          <pre id="openclaw-config-snippet" class="code-block"></pre>
+          <div class="btn-row" style="margin-top: 8px;">
+            <button class="btn btn-secondary btn-sm" onclick="copyOpenClawConfig()">Copy config</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- OpenClaw: active config (hidden when no destination is registered) -->
+      <div id="openclaw-configured" class="card" style="display: none;">
+        <div class="field">
+          <label class="label">Gateway URL</label>
+          <div class="token-row">
+            <input type="text" id="openclaw-url-display" class="token-input" readonly>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Hook path</label>
+          <div class="token-row">
+            <input type="text" id="openclaw-path-display" class="token-input" readonly>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Action</label>
+          <div class="token-row">
+            <input type="text" id="openclaw-action-display" class="token-input" readonly>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <button class="btn btn-primary btn-sm" onclick="sendOpenClawLocation()">Send location now</button>
+          <button class="btn btn-secondary btn-sm" onclick="testOpenClaw()">Test connection</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteOpenClaw()">Remove</button>
+        </div>
+        <div id="openclaw-test-status" class="help" style="display: none;"></div>
+      </div>
+    </section>
+
+    <!-- Webhook -->
+    <section class="dash-section" id="webhook">
+      <div class="dash-section-head">
+        <h2>Webhook</h2>
+        <span class="badge pending"><span class="dot"></span>Not registered</span>
+      </div>
+      <p class="section-intro">
+        For any service that accepts a POST. PingClaw sends each location update to a URL you control, signed with a bearer secret.
+      </p>
+
+      <!-- Webhook: setup instructions (hidden when a webhook is active) -->
+      <div id="webhook-setup" class="card">
+        <div class="step-hd"><span class="num">1</span>Export your API key</div>
+        <p class="help">Generate or rotate your API key above, copy it, then set it in your shell:</p>
+        <div class="token-row" style="margin-top: 10px;">
+          <input type="text" id="webhook-token-example" class="token-input" readonly value="export PINGCLAW_TOKEN=ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+          <button class="btn btn-secondary btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
+        </div>
+        <hr class="hr-dotted">
+        <div class="step-hd"><span class="num">2</span>Pick a webhook secret</div>
+        <p class="help">Any string works. PingClaw will replay it on every outbound POST so your receiver can verify:</p>
+        <div class="token-row" style="margin-top: 10px;">
+          <input type="text" class="token-input" readonly value="export WEBHOOK_SECRET=$(openssl rand -hex 16)">
+          <button class="btn btn-secondary btn-sm" onclick="copyAdjacentInput(this)">Copy</button>
+        </div>
+        <hr class="hr-dotted">
+        <div class="step-hd"><span class="num">3</span>Register the webhook</div>
+        <p class="help">Replace the URL with your receiver, then run:</p>
+        <pre id="webhook-help-curl" class="code-block" style="margin-top: 10px;"></pre>
+        <div class="btn-row" style="margin-top: 12px;">
+          <button class="btn btn-secondary btn-sm" onclick="copyWebhookCurl(this)">Copy curl</button>
+        </div>
+      </div>
+
+      <!-- Webhook: active config (hidden when no webhook is registered) -->
+      <div id="webhook-configured" class="card" style="display: none;">
+        <div class="field">
+          <label class="label">URL</label>
+          <div class="token-row">
+            <input type="text" id="webhook-url-display" class="token-input" readonly>
+            <button class="btn btn-secondary btn-sm" onclick="copyWebhookField('url')">Copy</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Secret</label>
+          <div class="token-row">
+            <input type="text" id="webhook-secret-display" class="token-input" readonly>
+            <button class="btn btn-secondary btn-sm" onclick="copyWebhookField('secret')">Copy</button>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="testWebhook()">Send test</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteWebhook()">Remove webhook</button>
+        </div>
+        <div id="webhook-test-status" class="help" style="display: none;"></div>
+      </div>
+    </section>
+
+    <!-- Your Data -->
+    <section class="dash-section" id="data">
+      <div class="dash-section-head">
+        <h2>Your data</h2>
+        <span class="badge configured"><span class="dot"></span>Visible</span>
+      </div>
+      <p class="section-intro">
+        Every record the server stores about your account. Nothing hidden, nothing retrospective.
+      </p>
+      <div class="card">
+        <div class="btn-row" style="margin-bottom: 16px;">
+          <button id="my-data-toggle" class="btn btn-secondary btn-sm" onclick="viewMyData()">View my data</button>
+        </div>
+        <div id="my-data-wrap" style="display: none;">
+          <pre id="my-data-display" class="code-block" style="max-height: 420px; overflow: auto;"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Delete Account -->
+    <section class="dash-section danger-zone" id="delete">
+      <div class="dash-section-head">
+        <h2>Delete account</h2>
+        <span class="badge danger"><span class="dot"></span>Irreversible</span>
+      </div>
+      <p class="section-intro">
+        Permanently delete your account and all stored data. This cannot be undone.
+      </p>
+      <div class="card">
+        <div class="btn-row">
+          <button class="btn btn-danger btn-sm" onclick="deleteAccount()">Delete account</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container-wide inner">
+    <span class="footer-tag">pingclaw · location context for any AI agent</span>
+    <div>
+      <a href="/privacypolicy">Privacy</a>
+      <a href="/termsofservice">Terms</a>
+      <a href="https://github.com/pingclaw-me">GitHub</a>
+      <span style="margin-left: 24px; color: var(--ink-faint);">© 2026 Christian Reimer</span>
+    </div>
+  </div>
+</footer>
+
+</div><!-- /#dashboard -->
+
+</main>
+
+<script src="/app.js"></script>
+<script src="/pingclaw-site.js"></script>
+
 </body>
 </html>

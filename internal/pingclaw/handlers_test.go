@@ -275,7 +275,6 @@ func TestReadWriteLocation(t *testing.T) {
 		Lat:            48.2085,
 		Lng:            16.3721,
 		AccuracyMetres: &acc,
-		Activity:       "Walking",
 		Timestamp:      "2026-04-21T12:00:00Z",
 		ReceivedAt:     "2026-04-21T12:00:01Z",
 	})
@@ -296,9 +295,6 @@ func TestReadWriteLocation(t *testing.T) {
 	}
 	if loc.AccuracyMetres == nil || *loc.AccuracyMetres != 12.5 {
 		t.Fatalf("wrong accuracy: %v", loc.AccuracyMetres)
-	}
-	if loc.Activity != "Walking" {
-		t.Fatalf("wrong activity: %s", loc.Activity)
 	}
 }
 

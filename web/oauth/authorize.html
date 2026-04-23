@@ -1,63 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Authorize — PingClaw</title>
-    <link rel="icon" type="image/png" sizes="any" href="/icon.png?v=7">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=DM+Sans:ital,wght@0,300;0,400;0,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=41">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authorize — PingClaw</title>
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#B8472C">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="/pingclaw-site.css">
 </head>
 <body>
-    <main>
-        <div class="pc-container-narrow" style="max-width: 400px; padding-top: 80px; padding-bottom: 64px; text-align: center;">
 
-            <a href="/" style="display: inline-block; margin-bottom: 32px;">
-                <picture>
-                    <source srcset="/wordmark.png?v=1" media="(prefers-color-scheme: dark)">
-                    <img src="/wordmark-light.png?v=1" alt="PingClaw" class="pc-nav-wordmark" style="height: 40px;">
-                </picture>
-            </a>
+<div class="container-narrow" style="max-width: 400px; padding-top: 80px; padding-bottom: 64px; text-align: center;">
 
-            <div class="pc-card" style="text-align: left;">
-                <div class="pc-eyebrow" style="margin-bottom: 16px;">Authorize</div>
+    <a href="/" style="display: inline-block; margin-bottom: 32px;">
+        <span class="logomark" style="font-size: 24px; justify-content: center;">
+            <span class="pin"></span>
+            pingclaw
+        </span>
+    </a>
 
-                <p class="pc-body" style="margin-bottom: 16px;">
-                    <strong>PingClaw GPT</strong> wants to access your location data.
-                </p>
-                <p class="pc-help" style="margin-bottom: 24px;">
-                    Open the PingClaw app on your phone, go to Settings, and
-                    generate a sign-in code. Enter it below to approve.
-                </p>
+    <div class="card" style="text-align: left;">
+        <div class="eyebrow" style="margin-bottom: 16px;">Authorize</div>
 
-                <form method="POST" style="display: flex; flex-direction: column; gap: 12px;">
-                    <input type="hidden" name="client_id" value="{{.ClientID}}">
-                    <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
-                    <input type="hidden" name="state" value="{{.State}}">
-                    <div class="pc-token-row">
-                        <input type="text" name="code" placeholder="Enter code" maxlength="8"
-                               style="text-transform: uppercase; font-family: var(--pc-font-mono); letter-spacing: 0.1em;"
-                               required>
-                    </div>
-                    <button type="submit" class="pc-btn-primary pc-btn-block">Approve</button>
-                    <a href="/" class="pc-btn-ghost pc-btn-block" style="text-align: center; text-decoration: none;">Deny</a>
-                </form>
-
-                {{if .Error}}
-                <p class="pc-help pc-help-error" style="margin-top: 12px;">{{.Error}}</p>
-                {{end}}
-            </div>
-        </div>
-    </main>
-
-    <footer class="pc-footer">
-        <p>
-            Location context for AI &nbsp;·&nbsp;
-            <a href="/privacypolicy">Privacy</a> &nbsp;·&nbsp;
-            <a href="/termsofservice">Terms</a>
+        <p style="margin-bottom: 16px;">
+            <strong>PingClaw GPT</strong> wants to access your location data.
         </p>
-    </footer>
+        <p class="help" style="margin-bottom: 24px;">
+            Open the PingClaw app on your phone, go to Settings, and
+            generate a sign-in code. Enter it below to approve.
+        </p>
+
+        <form method="POST" style="display: flex; flex-direction: column; gap: 12px;">
+            <input type="hidden" name="client_id" value="{{.ClientID}}">
+            <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+            <input type="hidden" name="state" value="{{.State}}">
+            <div class="token-row">
+                <input type="text" name="code" class="token-input" placeholder="Enter code" maxlength="8"
+                       style="text-transform: uppercase; letter-spacing: 0.1em;"
+                       required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%;">Approve</button>
+            <a href="/" class="btn btn-secondary" style="width: 100%; text-align: center; text-decoration: none;">Deny</a>
+        </form>
+
+        {{if .Error}}
+        <p class="help" style="margin-top: 12px; color: var(--red);">{{.Error}}</p>
+        {{end}}
+    </div>
+</div>
+
+<footer class="site-footer">
+  <div class="container inner">
+    <span class="footer-tag">pingclaw · location context for any AI agent</span>
+    <div>
+      <a href="/privacypolicy">Privacy</a>
+      <a href="/termsofservice">Terms</a>
+    </div>
+  </div>
+</footer>
+
 </body>
 </html>

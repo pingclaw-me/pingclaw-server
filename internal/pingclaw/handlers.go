@@ -117,7 +117,6 @@ type cachedLocation struct {
 	Lat            float64  `json:"lat"`
 	Lng            float64  `json:"lng"`
 	AccuracyMetres *float64 `json:"accuracy_metres,omitempty"`
-	Activity       string   `json:"activity,omitempty"`
 	Timestamp      string   `json:"timestamp"`   // RFC3339, sent by client
 	ReceivedAt     string   `json:"received_at"` // RFC3339, set by server
 }
@@ -501,16 +500,11 @@ func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {
 	} else {
 		locField["accuracy_metres"] = nil
 	}
-	var activity any
-	if loc.Activity != "" {
-		activity = loc.Activity
-	}
 	writeJSON(w, 200, map[string]any{
 		"status":      "ok",
 		"server_time": time.Now().UTC().Format(time.RFC3339),
 		"timestamp":   loc.Timestamp,
 		"location":    locField,
-		"activity":    activity,
 	})
 }
 
@@ -531,7 +525,6 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 			Lng            float64 `json:"lng"`
 			AccuracyMetres float64 `json:"accuracy_metres"`
 		} `json:"location"`
-		Activity string `json:"activity"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		slog.Warn("[PINGCLAW LOCATION] invalid body", "user_id", userID, "error", err)
@@ -540,7 +533,7 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("[PINGCLAW LOCATION]",
 		"user_id", userID, "lat", req.Location.Lat, "lng", req.Location.Lng,
-		"accuracy_m", req.Location.AccuracyMetres, "activity", req.Activity)
+		"accuracy_m", req.Location.AccuracyMetres)
 	if req.Timestamp == "" {
 		req.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -548,7 +541,6 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 	loc := cachedLocation{
 		Lat:        req.Location.Lat,
 		Lng:        req.Location.Lng,
-		Activity:   req.Activity,
 		Timestamp:  req.Timestamp,
 		ReceivedAt: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -575,7 +567,6 @@ func (h *Handler) PostLocation(w http.ResponseWriter, r *http.Request) {
 				"lng":             req.Location.Lng,
 				"accuracy_metres": req.Location.AccuracyMetres,
 			},
-			"activity": req.Activity,
 		}
 		go fireUserWebhook(hookURL, secret, userID, payload)
 		h.recordIntegrationActivity(userID, "webhook")
@@ -905,7 +896,6 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 		Lat            float64  `json:"lat"`
 		Lng            float64  `json:"lng"`
 		AccuracyMetres *float64 `json:"accuracy_metres"`
-		Activity       *string  `json:"activity"`
 		Timestamp      string   `json:"timestamp"`
 		ReceivedAt     string   `json:"received_at"`
 	}
@@ -995,10 +985,6 @@ func (h *Handler) GetMyData(w http.ResponseWriter, r *http.Request) {
 			AccuracyMetres: cached.AccuracyMetres,
 			Timestamp:      cached.Timestamp,
 			ReceivedAt:     cached.ReceivedAt,
-		}
-		if cached.Activity != "" {
-			a := cached.Activity
-			loc.Activity = &a
 		}
 		resp.Location = &loc
 	}

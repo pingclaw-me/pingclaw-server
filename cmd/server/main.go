@@ -41,7 +41,13 @@ import (
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug-level logging")
 	local := flag.Bool("local", false, "Self-hosted mode: SQLite, no Redis, no social auth")
+	newToken := flag.Bool("token", false, "Generate a new pairing token (requires --local)")
 	flag.Parse()
+
+	if *newToken && !*local {
+		fmt.Fprintln(os.Stderr, "--token requires --local")
+		os.Exit(1)
+	}
 
 	godotenv.Load()
 
@@ -75,6 +81,11 @@ func main() {
 
 		// Bootstrap: create a user + pairing token on first run.
 		bootstrapLocalUser(rawDB, port)
+
+		// --token: rotate the pairing token and print the new one.
+		if *newToken {
+			rotateLocalToken(rawDB)
+		}
 
 		// Always print reachable URLs on startup.
 		printLocalURLs(port)
@@ -498,6 +509,35 @@ func bootstrapLocalUser(db *sql.DB, port string) {
 	fmt.Println("  2. Enter the server URL and pairing token")
 	fmt.Println("  3. Tap \"Connect\"")
 	fmt.Println("===============================")
+	fmt.Println()
+}
+
+// rotateLocalToken deletes all existing pairing tokens for the local
+// user and creates a fresh one, printing it to stdout.
+func rotateLocalToken(db *sql.DB) {
+	userID := "usr_local"
+
+	if _, err := db.Exec(
+		`DELETE FROM user_tokens WHERE user_id = ? AND kind = 'pairing_token'`, userID); err != nil {
+		slog.Error("token rotation: delete failed", "error", err)
+		return
+	}
+
+	token := pingclaw.GenerateToken("pt_")
+	hash := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	if _, err := db.Exec(
+		`INSERT INTO user_tokens (token_hash, user_id, kind, label) VALUES (?, ?, 'pairing_token', 'bootstrap')`,
+		tokenHash, userID); err != nil {
+		slog.Error("token rotation: insert failed", "error", err)
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("=== New Pairing Token ===")
+	fmt.Printf("Pairing Token: %s\n", token)
+	fmt.Println("=========================")
 	fmt.Println()
 }
 
