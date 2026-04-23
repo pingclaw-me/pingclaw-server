@@ -1139,18 +1139,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /pingclaw/oauth/authorize", h.OAuthAuthorize)
 	mux.HandleFunc("POST /pingclaw/oauth/token", h.OAuthToken)
 
-	// Outgoing webhook configuration — dashboard/app only (not api_key)
-	mux.HandleFunc("GET /pingclaw/webhook", h.requireAuthKinds(h.GetWebhook, "web_session", "pairing_token"))
-	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuthKinds(h.PutWebhook, "web_session", "pairing_token"))
-	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuthKinds(h.DeleteWebhook, "web_session", "pairing_token"))
-	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuthKinds(h.TestWebhook, "web_session", "pairing_token"))
+	// Outgoing webhook configuration
+	mux.HandleFunc("GET /pingclaw/webhook", h.requireAuth(h.GetWebhook))
+	mux.HandleFunc("PUT /pingclaw/webhook", h.requireAuth(h.PutWebhook))
+	mux.HandleFunc("DELETE /pingclaw/webhook", h.requireAuth(h.DeleteWebhook))
+	mux.HandleFunc("POST /pingclaw/webhook/test", h.requireAuth(h.TestWebhook))
 
-	// OpenClaw gateway push delivery — dashboard/app only (not api_key)
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw", h.requireAuthKinds(h.RegisterOpenClawDest, "web_session", "pairing_token"))
-	mux.HandleFunc("GET /pingclaw/webhook/openclaw", h.requireAuthKinds(h.GetOpenClawDest, "web_session", "pairing_token"))
-	mux.HandleFunc("DELETE /pingclaw/webhook/openclaw", h.requireAuthKinds(h.DeleteOpenClawDest, "web_session", "pairing_token"))
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw/test", h.requireAuthKinds(h.TestOpenClawDest, "web_session", "pairing_token"))
-	mux.HandleFunc("POST /pingclaw/webhook/openclaw/send", h.requireAuthKinds(h.SendOpenClawLocation, "web_session", "pairing_token"))
+	// OpenClaw gateway push delivery
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw", h.requireAuth(h.RegisterOpenClawDest))
+	mux.HandleFunc("GET /pingclaw/webhook/openclaw", h.requireAuth(h.GetOpenClawDest))
+	mux.HandleFunc("DELETE /pingclaw/webhook/openclaw", h.requireAuth(h.DeleteOpenClawDest))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/test", h.requireAuth(h.TestOpenClawDest))
+	mux.HandleFunc("POST /pingclaw/webhook/openclaw/send", h.requireAuth(h.SendOpenClawLocation))
 }
 
 // --- OpenClaw gateway push delivery ---
