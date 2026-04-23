@@ -7,8 +7,8 @@ Your phone runs the PingClaw app and sends its position to this server. Your AI 
 ## Quick start (self-hosted)
 
 ```bash
-go install github.com/pingclaw-me/pingclaw-server/cmd/server@latest
-server --local
+go install github.com/pingclaw-me/pingclaw-server/cmd/pingclaw-server@latest
+pingclaw-pingclaw-server --local
 ```
 
 That's it. The server starts with a SQLite database, prints a pairing token, and listens on port 8080:
@@ -34,7 +34,7 @@ Your phone needs to reach the server over the network. Pick whichever fits your 
 **Tailscale** (recommended) — if both your machine and phone are on the same tailnet, use the Tailscale hostname:
 
 ```bash
-server --local
+pingclaw-server --local
 # Use http://my-machine.tail1234.ts.net:8080 in the app
 ```
 
@@ -48,7 +48,7 @@ tailscale funnel 8080
 **ngrok** — punch through NAT without any network config:
 
 ```bash
-server --local
+pingclaw-server --local
 ngrok http 8080
 # Use the https://xxxx.ngrok-free.app URL in the app
 ```
@@ -56,7 +56,7 @@ ngrok http 8080
 **Same WiFi** — if your phone and machine are on the same network, use the LAN IP directly:
 
 ```bash
-server --local
+pingclaw-server --local
 # Use http://192.168.1.x:8080 in the app
 ```
 

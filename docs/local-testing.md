@@ -26,7 +26,7 @@ cd pingclaw-server
 PORT=8090 \
 DATABASE_URL='postgres://pingclaw:pingclaw@localhost:5433/pingclaw?sslmode=disable' \
 REDIS_URL='redis://localhost:6380' \
-go run ./cmd/server --debug
+go run ./cmd/pingclaw-server --debug
 ```
 
 The server listens on `http://localhost:8090`. Port 8090 avoids
