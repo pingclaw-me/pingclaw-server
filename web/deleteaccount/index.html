@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delete account — PingClaw</title>
+<meta name="description" content="How to delete your PingClaw account and all associated data.">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#B8472C">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="/pingclaw-site.css">
+</head>
+<body>
+
+<nav class="top">
+  <div class="container nav-inner">
+    <a href="/" class="logomark">
+      <span class="pin"></span>
+      pingclaw
+    </a>
+    <div class="nav-links">
+      <a href="/">‹ Back</a>
+    </div>
+  </div>
+</nav>
+
+<div class="legal-wrap">
+
+  <div class="legal-eyebrow" style="color: var(--red);">Account deletion</div>
+  <h1 class="legal-title">Delete your account</h1>
+
+  <div class="legal-prose">
+
+    <p>You can permanently delete your PingClaw account and all associated data at any time. Deletion is immediate and irreversible.</p>
+
+    <h2>What is deleted</h2>
+    <ul>
+      <li>Your account and user ID</li>
+      <li>All sign-in identities (Apple, Google)</li>
+      <li>All authentication tokens (pairing token, API key, web sessions)</li>
+      <li>Webhook configuration (URL and secret)</li>
+      <li>OpenClaw gateway configuration</li>
+      <li>Your cached location</li>
+    </ul>
+    <p>After deletion, nothing remains on the server. Token hashes, identity links, and all configuration are permanently removed.</p>
+
+    <h2>How to delete</h2>
+    <p><strong>From the app</strong> — open Settings, scroll to Account & data, tap "Delete all data", and confirm.</p>
+    <p><strong>From the web</strong> — <a href="/#signin">sign in</a> to the dashboard, scroll to the "Delete account" section, and click "Delete account".</p>
+
+    <h2>What happens after deletion</h2>
+    <ul>
+      <li>The app returns to the sign-in screen.</li>
+      <li>Any connected agents stop receiving location data immediately.</li>
+      <li>Your API key and pairing token stop working.</li>
+      <li>Webhook and OpenClaw deliveries stop.</li>
+    </ul>
+    <p>There is no recovery. If you want to use PingClaw again, you will need to create a new account.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about account deletion? Email <a href="mailto:contact@pingclaw.me">contact@pingclaw.me</a>.</p>
+
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="container inner">
+    <span class="footer-tag">pingclaw · location context for any AI agent</span>
+    <div>
+      <a href="/privacypolicy">Privacy</a>
+      <a href="/termsofservice">Terms</a>
+      <a href="/deleteaccount">Delete account</a>
+      <a href="https://github.com/pingclaw-me">GitHub</a>
+      <span style="margin-left: 24px; color: var(--ink-faint);">© 2026 Christian Reimer</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/pingclaw-site.js"></script>
+
+</body>
+</html>
